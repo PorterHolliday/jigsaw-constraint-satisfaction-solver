@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="UTF-8">
+	<title>Jigsaw puzzle</title>
+	<script>
+		console.time('timer');
+		let solutionCount = 0;
+		let solutions = '';
+		// PieceSide - Object for one side of a puzzle piece
+		class PieceSide {
+			constructor() {
+				this.id = 0; // Id of 0 = unassigned
+				this.isOuterSide1 = false; // Whether it is connected to edge piece on side 1
+				this.otherPiece = null; // Stores piece that needs to go next to this side (only used in certain situations)
+			}
+			// Sets this side to connect with specified side
+			setConnectingId(otherEdgeId) {
+				this.id = -otherEdgeId;
+			}
+			// Checks if this side fits with specified side, or if either side is unassigned
+			fitsWith(otherEdgeId) {
+				return this.id == -otherEdgeId || this.id == 0 || otherEdgeId == 0;
+			}
+			// Returns whether this side is flat (unassigned)
+			isFlat() {
+				return this.id == 0;
+			}
+			// Returns id as a string for printing
+			toString() {
+				return this.id;
+			}
+		}
+
+		// Direction constants
+		const TOP = 0;
+		const RIGHT = 1;
+		const BOTTOM = 2;
+		const LEFT = 3;
+		// Returns the direction opposite of the one input
+		function getOpposite(direction) {
+			return (direction + 2) % 4;
+		}
+
+		// PuzzlePiece - Puzzle piece object
+		class PuzzlePiece {
+			constructor(id, x1, y1) {
+				this.id = id; // This piece's id
+				this.x = x1; // Current x position
+				this.y = y1; // Current y position
+				this.x1 = x1; // x position in layout1
+				this.y1 = y1; // y position in layout1
+				this.x2 = -1; // x position in layout2 (-1 = unassigned)
+				this.y2 = -1; // y position in layout2 (-1 = unassigned)
+				this.edges = [new PieceSide(), new PieceSide(), new PieceSide(), new PieceSide()]; // This pieces sides
+				this.side2Index = 0; // This pieces rotation on layout2
+				this.side = 1; // Which layout this piece is on (1 = layout1, 2 = layout2)
+			}
+			// Sets this piece's properties to its layout1 position and sides
+			goToSide1() {
+				if (this.side == 1) return;
+				this.side = 1;
+				this.x = this.x1;
+				this.y = this.y1;
+				this.edges = this.edges.slice(4 - this.side2Index).concat(this.edges.slice(0, 4 - this.side2Index)); // Rotates sides array back to original based on side 2 rotation
+			}
+			// Sets this piece's properties to its layout2 position and sides
+			goToSide2() {
+				if (this.side == 2) return;
+				this.side = 2;
+				this.x = this.x2;
+				this.y = this.y2;
+				this.edges = this.edges.slice(this.side2Index).concat(this.edges.slice(0, this.side2Index)); // Rotates sides array based on side 2 rotation
+			}
+			// Changes side 2 rotation by 90 counter clockwise
+			rotateSide2() {
+				let side2 = false;
+				if (this.side == 2) {
+					side2 = true;
+					this.goToSide1();
+				}
+				this.side2Index = (this.side2Index + 1) % 4;
+				if (side2) this.goToSide2();
+			}
+			// Returns the direction the specified side is on (TOP, RIGHT, BOTTOM, LEFT)
+			getEdgeDirection(edge) {
+				return this.edges.indexOf(edge);
+			}
+			// Returns the piece id and edge ids for printing
+			toString() {
+				let string = this.id;
+				for (let i = 0; i < this.edges.length; i++) {
+					string += "," + this.edges[i].toString();
+				}
+				return string;
+			}
+		}
+
+		// PuzzleLayout - One layout of the puzzle (there are always 2)
+		class PuzzleLayout {
+			constructor(width, height) {
+				this.width = width; // Width in pieces
+				this.height = height; // Height in pieces
+				this.pieces = []; // Will become 2d array of pieces [x][y]
+				for (let x = 0; x < width; x++) {
+					this.pieces.push([]);
+					for (let y = 0; y < height; y++) {
+						this.pieces[x].push(null);
+					}
+				}
+				this.innerPieceX = 1; // X position of next inner piece to place
+				this.innerPieceY = 1; // Y position of next inner piece to place
+			}
+			// Returns the coordinates for the piece specified
+			getPieceCoordinates(piece) {
+				let tempX;
+				let tempY;
+				for (tempX = 0; tempX < this.width; tempX++) {
+					if (this.pieces[tempX].indexOf(piece) > -1) {
+						tempY = this.pieces[tempX].indexOf(piece);
+						break;
+					}
+				}
+				if (!tempY) return null;
+				return { x: tempX, y: tempY };
+			}
+			// Returns the piece in the direction specified of the piece specified
+			// Like 'get piece on RIGHT of this piece'
+			getPieceOn(direction, piece) {
+				if (piece.x == -1 || piece.y == -1) return null;
+				if (direction == TOP) {
+					if (piece.y <= 1) return null;
+					return this.pieces[piece.x][piece.y - 1];
+				}
+				if (direction == BOTTOM) {
+					if (piece.y >= this.height - 2) return null;
+					return this.pieces[piece.x][piece.y + 1];
+				}
+				if (direction == LEFT) {
+					if (piece.x <= 1) return null;
+					return this.pieces[piece.x - 1][piece.y];
+				}
+				if (direction == RIGHT) {
+					if (piece.x >= this.width - 2) return null;
+					return this.pieces[piece.x + 1][piece.y];
+				}
+				return null;
+			}
+			// Returns whether the piece specified fits with the piece in the specified direction
+			// Like 'check if piece fits with piece currently on BOTTOM'
+			fitsWithPieceOn(direction, piece) {
+				let otherPiece = this.getPieceOn(direction, piece);
+				if (!otherPiece) return true;
+				otherPiece.goToSide2();
+				return piece.edges[direction].fitsWith(otherPiece.edges[getOpposite(direction)]);
+			}
+			// Adds this piece as an inner piece, setting innerPieceX & innerPieceY to the next
+			// inner space that needs to be set
+			addInnerPiece(piece) {
+				piece.x2 = this.innerPieceX;
+				piece.y2 = this.innerPieceY;
+				this.pieces[this.innerPieceX][this.innerPieceY] = piece;
+				//if (this.innerPieceX == this.width - 2 && this.innerPieceY == this.height - 2) return;
+
+				this.innerPieceX++;
+				if (this.innerPieceX == this.width - 1) {
+					this.innerPieceX = 1;
+					this.innerPieceY++;
+				}
+			}
+			// Removes the most recently placed inner piece and sets innerPieceX & innerPieceY to the
+			// inner space it was on
+			removeInnerPiece() {
+				if (this.innerPieceX == 1 && this.innerPieceY == 1) return;
+				this.innerPieceX--;
+				if (this.innerPieceX == 0) {
+					this.innerPieceX = this.width - 2;
+					this.innerPieceY--;
+				}
+
+				let piece = this.pieces[this.innerPieceX][this.innerPieceY];
+				piece.x2 = -1;
+				piece.y2 = -1;
+				this.pieces[this.innerPieceX][this.innerPieceY] = null;
+			}
+			// Returns whether the specified side of the piece (side in direction) is connected
+			// to an edge piece
+			isOnOuterEdge(piece, direction) {
+				let coordinates = this.getPieceCoordinates(piece);
+				if (!coordinates) return null;
+				if (direction == TOP && coordinates.y == 1) return true;
+				if (direction == BOTTOM && coordinates.y == this.height - 2) return true;
+				if (direction == LEFT && coordinates.x == 1) return true;
+				if (direction == RIGHT && coordinates.x == this.width - 2) return true;
+				return false;
+			}
+		}
+
+		let width  = 6;
+		let height = 6;
+		let layout1 = new PuzzleLayout(width, height);
+		let layout2 = new PuzzleLayout(width, height);
+		let outerPieces;
+		let innerPieces;
+		let edgeId = 1;
+		let innerEdgeIdMax = 1;
+		let edgeIdMax = ((width - 4) * (height - 4) * 4 + (width - 4) * 6 + (height - 4) * 6 + 8) / 2;
+		let puzzleCount = 0;
+		
+		initPuzzlePieces();
+		solveInnerPieces();
+		// Initializes puzzle piece ids, static piece sides, and layout1 positions
+		function initPuzzlePieces() {
+			outerPieces = [];
+			innerPieces = [];
+			let id = 1;
+			for (let x = 0; x < width; x++) {
+				for (let y = 0; y < height; y++) {
+					let puzzlePiece = new PuzzlePiece(id, x, y);
+					if (y >= 1 && y <= height -2) {
+						if (x == 1) {
+							puzzlePiece.edges[LEFT].id = edgeId;
+							puzzlePiece.edges[LEFT].isOuterSide1 = true;
+							edgeId++;
+						} else if (x == width - 2) {
+							puzzlePiece.edges[RIGHT].id = edgeId;
+							puzzlePiece.edges[RIGHT].isOuterSide1 = true;
+							edgeId++;
+						}
+					}
+					if (x >= 1 && x <= width - 2) {
+						if (y == 1) {
+							puzzlePiece.edges[TOP].id = edgeId;
+							puzzlePiece.edges[TOP].isOuterSide1 = true;
+							edgeId++;
+						} else if (y == height - 2) {
+							puzzlePiece.edges[BOTTOM].id = edgeId;
+							puzzlePiece.edges[BOTTOM].isOuterSide1 = true;
+							edgeId++;
+						}
+					}
+					layout1.pieces[x][y] = puzzlePiece;
+					if (x == 0 || x == width - 1 || y == 0 || y == height - 1) {
+						outerPieces.push(puzzlePiece);
+					} else {
+						innerPieces.push(puzzlePiece);
+					}
+					id++;
+				}
+			}
+            edgeId--;
+			innerEdgeIdMax = edgeId; // Max static id
+            edgeIdMax = edgeIdMax - (edgeIdMax - innerEdgeIdMax) / 2; // Max dynamic id
+            //console.log('InnerEdgeIdMax: ' + edgeId);
+            //console.log('EdgeIdMax: ' + edgeIdMax);
+			//outputPuzzleLayout();
+		}
+
+		// Backtrack function
+		function solveInnerPieces() {
+            // If no more pieces to place, output solution and return
+			if (innerPieces.length <= 0) {
+				puzzleCount++;
+				//solveOuterPieces();
+				//console.log(puzzleCount);
+				outputPuzzleLayout();
+				return true;
+			}
+			// Go through each piece left to place and try it in the current space in layout2
+			for (let i = 0; i < innerPieces.length; i++) {
+				let piece = innerPieces[i];
+			    layout2.addInnerPiece(piece); // Add next piece to layout2
+
+				// Go through each rotation of the piece and try it in the current space
+				for (let j = 0; j < 4; j++) {
+					piece.rotateSide2();
+					
+                    let changes = { edgeIdChange: 0, edges: [] }; // Saves any changes made to be reverted
+					// If pieces were updated successfully, continue to next space
+					if (updatePieceSides(piece, changes)) {
+						innerPieces.splice(i, 1); // Remove piece just placed from list of pieces
+						if (solveInnerPieces()) return true; // Move on to next space and try pieces that are left
+                        innerPieces.splice(i, 0, piece); // Add piece back to list of pieces
+					} 
+                    revertChanges(changes); // Revert any changes made when updating pieces
+				}
+                layout2.removeInnerPiece(); // Remove most recently placed piece to try the next one
+			}
+            return false;
+		}
+		
+		// Updates the specified piece based on what it is placed next to in layout2 and
+		// save the changes in changes
+		function updatePieceSides(piece, changes) {
+			piece.goToSide2();
+			let pieceAbove = layout2.getPieceOn(TOP, piece); // Piece above piece that was just placed
+			if (pieceAbove) pieceAbove.goToSide2();
+			let pieceOnLeft = layout2.getPieceOn(LEFT, piece) // Piece on left of piece that was just placed
+			if (pieceOnLeft) pieceOnLeft.goToSide2();
+			
+			// If piece above or on left has designated piece to go beside
+			// it that is not this piece, return false
+			if (pieceAbove) {
+				if (pieceAbove.edges[BOTTOM].otherPiece &&
+					pieceAbove.edges[BOTTOM].otherPiece != piece) return false;
+			}
+			if (pieceOnLeft) {
+				if (pieceOnLeft.edges[RIGHT].otherPiece &&
+					pieceOnLeft.edges[RIGHT].otherPiece != piece) return false;
+			}
+
+			piece.goToSide2();
+			// If side is connected to edge piece on layout1, it can't be connected to edge piece on layout2
+			for (let d = 0; d < piece.edges.length; d++) {
+				let direction = d;
+				piece.goToSide1();
+				if (!piece.edges[direction].isOuterSide1) continue;
+				let edge = piece.edges[direction];
+				piece.goToSide2();
+				direction = piece.getEdgeDirection(edge);
+				if (layout2.isOnOuterEdge(piece, direction)) return false;
+			}
+
+			// Sides that don't fit can't connect
+			piece.goToSide2();
+			if (!layout2.fitsWithPieceOn(TOP, piece)) return false;
+			if (!layout2.fitsWithPieceOn(LEFT, piece)) return false;
+
+			// If side is designated as needing to connect to edge piece on layout2, it can't be placed not connected to edge piece
+			piece.goToSide2();
+			for (let d = 0; d < piece.edges.length; d++) {
+				if (piece.edges[d].isOuterSide1 || Math.abs(piece.edges[d].id) > innerEdgeIdMax || 
+					piece.edges[d].id < 0 || piece.edges[d].isFlat()) continue;
+				if (!layout2.isOnOuterEdge(piece, d)) return false;
+			}
+
+            // Side that is higher than innerEdgeMax (static side max) can't be placed
+			// connected to edge piece
+			piece.goToSide2();
+			if (piece.x == 1) {
+				if (Math.abs(piece.edges[LEFT].id) > innerEdgeIdMax) return false;
+			} else if (piece.x == layout2.width - 2) {
+				if (Math.abs(piece.edges[RIGHT].id) > innerEdgeIdMax) return false;
+			}
+			if (piece.y == 1) {
+				if (Math.abs(piece.edges[TOP].id) > innerEdgeIdMax) return false;
+			} else if (piece.y == layout2.height - 2) {
+				if (Math.abs(piece.edges[BOTTOM].id) > innerEdgeIdMax) return false;
+			}
+
+			// Can't place unassigned side connected to edge piece if it is connected to an unassigned side 
+			// that is connected to an edge piece on layout1
+			for (let d = 0; d < piece.edges.length; d++) {
+				piece.goToSide2();
+				let edge = piece.edges[d];
+				if (!edge.isFlat() || !layout2.isOnOuterEdge(piece, d)) continue;
+				piece.goToSide1();
+				let direction = piece.getEdgeDirection(edge);
+				let piece2 = layout1.getPieceOn(direction, piece);
+				piece2.goToSide1();
+				edge = piece2.edges[getOpposite(direction)];
+				if (!edge.isFlat()) continue;
+				piece2.goToSide2();
+				direction = piece2.getEdgeDirection(edge);
+				if (layout2.isOnOuterEdge(piece2, direction)) return false;
+			}
+
+			// Can't place unassigned side next to side that is greater than innerEdgeIdMax (static side max)
+			// because it is a dynamic side id that has a match already set on another piece
+			piece.goToSide2();
+			if (pieceAbove) {
+				pieceAbove.goToSide2();
+				if (piece.edges[TOP].isFlat() && !pieceAbove.edges[BOTTOM].isFlat() && Math.abs(pieceAbove.edges[BOTTOM].id) > innerEdgeIdMax) {
+					return false;
+				}
+				if (!piece.edges[TOP].isFlat() && pieceAbove.edges[BOTTOM].isFlat() && Math.abs(piece.edges[TOP].id) > innerEdgeIdMax) {
+					return false;
+				}
+			}
+			if (pieceOnLeft) {
+				pieceOnLeft.goToSide2();
+				if (piece.edges[LEFT].isFlat() && !pieceOnLeft.edges[RIGHT].isFlat() && Math.abs(pieceOnLeft.edges[RIGHT].id) > innerEdgeIdMax) {
+					return false;
+				}
+				if (!piece.edges[LEFT].isFlat() && pieceOnLeft.edges[RIGHT].isFlat() && Math.abs(piece.edges[LEFT].id) > innerEdgeIdMax) {
+					return false;
+				}
+			}
+
+			// When unassigned side connects to edge piece on layout1, check if unassigned side can be changed
+			// to match, if so change unassigned side & change connected edge on first side to match
+			// There are 3 pieces this deals with: the piece with a static side (piece p), the piece with an unassigned side (piece q),
+			// and the piece connected to piece q in layout1
+			piece.goToSide2();
+			if (pieceAbove) {
+				pieceAbove.goToSide2();
+				if (piece.edges[TOP].isFlat() && !pieceAbove.edges[BOTTOM].isFlat() && Math.abs(pieceAbove.edges[BOTTOM].id) <= innerEdgeIdMax) {
+					if (!change1Side(piece, TOP, -pieceAbove.edges[BOTTOM], changes)) return false;
+				}
+				if (!piece.edges[TOP].isFlat() && pieceAbove.edges[BOTTOM].isFlat() && Math.abs(piece.edges[TOP].id) <= innerEdgeIdMax) {
+					if (!change1Side(pieceAbove, BOTTOM, -piece.edges[TOP], changes)) return false;
+				}
+			}
+            piece.goToSide2();
+			if (pieceOnLeft) {
+				pieceOnLeft.goToSide2();
+				if (piece.edges[LEFT].isFlat() && !pieceOnLeft.edges[RIGHT].isFlat() && Math.abs(pieceOnLeft.edges[RIGHT].id) <= innerEdgeIdMax) {
+					if (!change1Side(piece, LEFT, -pieceOnLeft.edges[RIGHT], changes)) return false;
+				}
+				if (!piece.edges[LEFT].isFlat() && pieceOnLeft.edges[RIGHT].isFlat() && Math.abs(piece.edges[LEFT].id) <= innerEdgeIdMax) {
+                    if (!change1Side(pieceOnLeft, RIGHT, -piece.edges[LEFT], changes)) return false;
+				}
+			}
+
+			// When placing an unassigned side next to an unassigned side, check if it is valid to
+			// change both to a new edgeId and do so if it is
+			piece.goToSide2();
+			if (pieceAbove) {
+				pieceAbove.goToSide2();
+				//alert('Piece: ' + piece + ' PieceAbove: ' + pieceAbove);
+				if (piece.edges[TOP].isFlat() && pieceAbove.edges[BOTTOM].isFlat()) {
+					if (!changeFlatEdges(piece, TOP, pieceAbove, changes)) return false;
+				}
+			}
+            piece.goToSide2();
+			if (pieceOnLeft) {
+				pieceOnLeft.goToSide2();
+				//alert('Piece: ' + piece + ' PieceOnLeft: ' + pieceOnLeft);
+				if (piece.edges[LEFT].isFlat() && pieceOnLeft.edges[RIGHT].isFlat()) {
+					if (!changeFlatEdges(piece, LEFT, pieceOnLeft, changes)) return false;
+				}
+			}
+			
+			return true;
+		}
+		
+		// This checks criteria 3 and changes the sides if
+		// criteria 3 is met, logging it in the changes array
+		//   piece - Piece with unassigned side that is being changed
+		//   direction - Directions of the side being changed
+		//   id - Side id it is being changes to
+		//   changes - Array of changes made
+		//
+		//   return (boolean) - True if side was changed successfully, false if change is invalid
+		function change1Side(piece, direction, id, changes) {
+			// Change piece side to new id
+			piece.edges[direction].id = id;
+			// Get direction the side that will be changed is facing
+			// in layout1
+			let edge = piece.edges[direction];
+			piece.goToSide1();
+			direction = piece.getEdgeDirection(edge);
+
+			// Get piece next to that side
+			let piece2 = layout1.getPieceOn(direction, piece);
+
+			piece2.goToSide1();
+			piece2.edges[getOpposite(direction)].id = -id; // Change side touching piece side to opposite
+			let edge2 = piece2.edges[getOpposite(direction)];
+			piece2.goToSide2();
+			direction = piece2.getEdgeDirection(edge2); // Get direction changed piece2 side faces in layout2
+			
+			// If this is null it means piece2 hasn't been placed in layout2 yet, so
+			// this change is valid
+			if (layout2.isOnOuterEdge(piece2, direction) == null) {
+                changes.edges.push(edge)
+                changes.edges.push(edge2)
+				return true;
+			// Or if piece2 changed side is connected to an edge piece in layout2, 
+			// this change is valid
+			} else if (layout2.isOnOuterEdge(piece2, direction)) {
+                changes.edges.push(edge)
+                changes.edges.push(edge2)
+				return true;
+			}
+			
+			// Otherwise, change is invalid so revert sides changed back to unassigned and return false
+			edge.id = 0;
+			edge2.id = 0;
+			return false;
+		}
+		
+		// This checks criteria 4 and makes the appropriate changes to the
+		// sides of the two pieces involved
+		//    piece1 - One piece with unassigned side
+		//    direction - Direction of side being changed
+		//    piece2 - Other piece with unassigned side (on direction from piece1)
+		//    changes - List of changes made
+		//
+		//    return (boolean) - True if changes were successful, false if changes are invalid
+		function changeFlatEdges(piece1, direction, piece2, changes) {
+			// Can't create new dynamic side id because it is already at dynamic id max
+			if (edgeId >= edgeIdMax) return false;
+			
+			// Increment dynamic side id
+			edgeId++;
+			changes.edgeIdChange++;
+
+			piece1.edges[direction].id = edgeId; // Set piece1 side in direction to new id
+			piece2.edges[getOpposite(direction)].id = -edgeId; // Set piece2 side in opposite direction to new id
+			
+			let edge1 = piece1.edges[direction];
+			let edge2 = piece2.edges[getOpposite(direction)];
+			
+			piece1.goToSide1();
+			piece2.goToSide1();
+			
+			let direction1 = piece1.getEdgeDirection(edge1); // Get direction of side that was changed on piece1 in layout1
+			let direction2 = piece2.getEdgeDirection(edge2); // Get direction of side that was changed on piece2 in layout1
+			
+			let piece3 = layout1.getPieceOn(direction1, piece1); // Get piece next to side that was changed on piece1 in layout1
+			let piece4 = layout1.getPieceOn(direction2, piece2); // Get piece next to side that was changed on piece2 in layout1
+
+			// If either piece is connected to the same piece in layout1 & layout2, it is invalid so take
+			// back the changes
+			if (piece2 == piece3 || piece1 == piece4) {
+				edgeId--;
+				changes.edgeIdChange--;
+				edge1.id = 0;
+				edge2.id = 0;
+				return false;
+			}
+
+			piece3.goToSide1();
+			piece4.goToSide1();
+			
+			piece3.edges[getOpposite(direction1)].id = -edgeId; // Changes side of piece3 that is next to changed side of piece1 in layout1
+			piece4.edges[getOpposite(direction2)].id = edgeId; // Changes side of piece4 that is next to changed side of piece2 in layout1
+			
+			let edge3 = piece3.edges[getOpposite(direction1)];
+			let edge4 = piece4.edges[getOpposite(direction2)];
+			
+			piece3.goToSide2();
+			piece4.goToSide2();
+			
+			let direction3 = piece3.getEdgeDirection(edge3); // Get direction of piece3 side that was changed in layout2
+			let direction4 = piece4.getEdgeDirection(edge4); // Get direction of piece4 side that was changed in layout2
+			
+			// If piece3 or piece4 side that was changed is connected to edge piece on layout2, it is invalid
+			// Piece next to piece3 side that was changed in layout2 must be piece4 or unassigned (null) and
+			// piece next to piece4 side that was changed in layout2 must be piece3 or unassigned (null)
+			if (!layout2.isOnOuterEdge(piece3, direction3) &&
+                !layout2.isOnOuterEdge(piece4, direction4) &&
+                (layout2.getPieceOn(direction3, piece3) == piece4 || layout2.getPieceOn(direction3, piece3) == null) &&
+				(layout2.getPieceOn(direction4, piece4) == piece3 || layout2.getPieceOn(direction4, piece4) == null)) {
+					piece3.edges[direction3].otherPiece = piece4;
+					piece4.edges[direction4].otherPiece = piece3;
+                    changes.edges.push(edge1);
+                    changes.edges.push(edge2);
+                    changes.edges.push(edge3);
+                    changes.edges.push(edge4);
+					return true;
+			}
+			
+			// Otherwise, piece is invalid and revert the changes
+			edgeId--;
+			changes.edgeIdChange--;
+			edge1.id = 0;
+			edge2.id = 0;
+			edge3.id = 0;
+			edge4.id = 0;
+			return false;
+		}
+
+		// Goes through the changes and reverts each side changed
+		// Also resets dynamic side id
+        function revertChanges(changes) {
+            for (let edge of changes.edges) {
+				edge.otherPiece = null;
+               	edge.id = 0;
+            }
+			edgeId -= changes.edgeIdChange;
+        }
+		
+		// Prints the both layout1 and layout2
+		function outputPuzzleLayout() {
+			solutionCount++;
+			/*for (let y = 0; y < layout1.height; y++) {
+				let line = '';
+				for (let x = 0; x < layout1.width; x++) {
+					layout1.pieces[x][y].goToSide1();
+					line += layout1.pieces[x][y].toString() + ' ';
+				}
+				solutions += line + '\n';
+			}*/
+			for (let y = 0; y < layout2.height; y++) {
+				let line = '';
+				for (let x = 0; x < layout2.width; x++) {
+					if (!layout2.pieces[x][y]) {
+						line += 'n,n ';
+						continue;
+					}
+					layout2.pieces[x][y].goToSide2();
+					if (layout2.pieces[x][y].side2Index % 2 == 0)
+						line += layout2.pieces[x][y].id + ',' + layout2.pieces[x][y].side2Index + ' ';
+					else
+						line += layout2.pieces[x][y].id + ',' + ((layout2.pieces[x][y].side2Index + 2) % 4) + ' ';
+				}
+				solutions += line + '\n';
+			}
+			//console.log(solutions);
+			//throw Error('');
+			solutions += '&';
+		}
+		console.timeEnd('timer');
+		console.log(solutionCount);
+		console.log(solutions);
+	</script>
+</head>
+
+<body>
+</body>
+
+</html>

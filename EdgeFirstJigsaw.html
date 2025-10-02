@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>Edge First Solver</title>
+    <script>
+        /*  Initialize puzzle layout
+         *  Solve edge
+         *      Find valid arrangements
+         *      For each valid arrangement, solve for inside
+         *  Solve for inside
+         *      Find valid arrangements
+         *      Save arrangement, then backtrack
+         */
+
+        // Initialize constants (set WIDTH & HEIGHT to both even or both odd #s)
+        const WIDTH = 6;
+        const HEIGHT = 6;
+        const STATIC_EDGE_ID_MAX = (WIDTH - 2) * 2 + (HEIGHT - 2) * 2;
+        const BORDER_EDGE_ID_MAX = (WIDTH - 1) * 2 + (HEIGHT - 1) * 2;
+        const CENTER_EDGE_ID_MAX = ((WIDTH - 2) * (HEIGHT - 2) * 4 - STATIC_EDGE_ID_MAX * 3) / 4 + STATIC_EDGE_ID_MAX + BORDER_EDGE_ID_MAX;
+
+        // Layout object class
+        class Layout {
+            constructor() {
+                this.locations = {};
+                this.pieceLocations = {};
+            }
+            placePiece(option) {
+                this.pieceLocations[`${option.piece.id}`] = option.location;
+                option.location.piece = option.piece;
+                option.location.rotation = option.rotation;
+            }
+            removePiece(option) {
+                const location = option.location;
+                delete this.pieceLocations[`${option.piece.id}`];
+                location.piece = null;
+                location.rotation = null;
+            }
+            getLocationInDirection(location, direction) {
+                if (direction == Direction.LEFT) {
+                    return this.locations[`${location.x-1},${location.y}`];
+                } else if (direction == Direction.RIGHT) {
+                    return this.locations[`${location.x+1},${location.y}`];
+                } else if (direction == Direction.TOP) {
+                    return this.locations[`${location.x},${location.y-1}`];
+                } else if (direction == Direction.BOTTOM) {
+                    return this.locations[`${location.x},${location.y+1}`];
+                }
+                return null;
+            }
+        }
+        // Puzzle piece object class
+        class Piece {
+            constructor(id) {
+                this.id = id;
+                this.edges = [null, null, null, null];
+                this.locationOptions = {};
+                this.locationOptionCount = 0;
+                this.connectedTo = [null, null, null, null];
+            }
+            setEdgeId(direction, value) {
+                edgesToRevert.push(new EdgeRevert(this, direction));
+                this.edges[direction] = value;
+                // Set neighbor piece's edge as well
+                if (layout1.pieceLocations[`${this.id}`]) {
+                    const location = layout1.pieceLocations[`${this.id}`];
+                    const neighborLocation = layout1.getLocationInDirection(location, direction);
+                    if (neighborLocation.piece) {
+                        edgesToRevert.push(new EdgeRevert(neighborLocation.piece, Direction.getOpposite(direction)));
+                        neighborLocation.piece.edges[Direction.getOpposite(direction)] = -value;
+                    }
+                }
+            }
+            getEdgeId(direction, rotation) {
+                const origDir = Direction.getOriginal(direction, rotation);
+                return this.edges[origDir];
+            }
+            addOption(option) {
+                const x = option.location.x;
+                const y = option.location.y;
+                const r = option.rotation;
+                if (this.locationOptions[`${x},${y},${r}`]) return;
+
+                this.locationOptions[`${x},${y},${r}`] = option;
+                this.locationOptionCount++;
+            }
+            removeOption(option, optionsToRevert) {
+                const x = option.location.x;
+                const y = option.location.y;
+                const r = option.rotation;
+                if (!this.locationOptions[`${x},${y},${r}`]) return true;
+
+                optionsToRevert.push(this.locationOptions[`${x},${y},${r}`]);
+                const location = this.locationOptions[`${x},${y},${r}`].location;
+                delete location.pieceOptions[`${this.id},${r}`];
+                location.pieceOptionCount--;
+                delete this.locationOptions[`${x},${y},${r}`];
+                this.locationOptionCount--;
+                if (location.pieceOptionCount == 0 || this.locationOptionCount == 0) return false;
+                return true;
+            }
+        }
+        function getEdge(pieceId, edge) {
+            return pieces[`${pieceId}`].edges[edge];
+        }
+        // Puzzle piece location object class
+        class Location {
+            constructor(x, y, piece, rotation) {
+                this.x = x;
+                this.y = y;
+                this.piece = piece;
+                this.rotation = rotation;
+                this.pieceOptions = {};
+                this.pieceOptionCount = 0;
+            }
+            setPiece(option) {
+                if (this.piece && this.piece != option.piece) return false;
+                if (!this.pieceOptions[`${option.piece.id},${option.rotation}`]) return false;
+
+                for (const connection of option.piece.connectedTo) {
+                    if (!connection.location.setPiece(connection)) {
+                        // Undo other connection placements
+                        for (const connection of option.piece.connectedTo) {
+                            connection.location.removePiece();
+                        }
+                        return false;
+                    }
+                }
+
+                this.piece = option.piece;
+                this.rotation = option.rotation;
+                return true;
+            }
+            removePiece() {
+                this.piece = null;
+                this.rotation = null;
+            }
+            addOption(option) {
+                const id = option.piece.id;
+                const r = option.rotation;
+                if (this.pieceOptions[`${id},${r}`]) return;
+
+                this.pieceOptions[`${id},${r}`] = option;
+                this.pieceOptionCount++;
+            }
+            removeOption(option, optionsToRevert) {
+                const id = option.piece.id;
+                const r = option.rotation;
+                if (!this.pieceOptions[`${id},${r}`]) return true;
+
+                optionsToRevert.push(this.pieceOptions[`${id},${r}`]);
+                const piece = this.pieceOptions[`${id},${r}`].piece;
+                delete piece.locationOptions[`${this.x},${this.y},${r}`];
+                piece.locationOptionCount--;
+                delete this.pieceOptions[`${id},${r}`];
+                this.pieceOptionCount--;
+                if (piece.locationOptionCount == 0 || this.pieceOptionCount == 0) return false;
+                return true;
+            }
+            removeAllPieceOptions(piece, optionsToRevert) {
+                const id = piece.id;
+                for (let r = 0; r < 4; r++) {
+                    if (!this.pieceOptions[`${id},${r}`]) continue;
+
+                    optionsToRevert.push(this.pieceOptions[`${id},${r}`]);
+                    delete piece.locationOptions[`${this.x},${this.y},${r}`];
+                    piece.locationOptionCount--;
+                    delete this.pieceOptions[`${id},${r}`];
+                    this.pieceOptionCount--;
+                }
+                if (piece.locationOptionCount == 0 || this.pieceOptionCount == 0) return false;
+                return true;
+            }
+        }
+        // Option object class
+        class Option {
+            constructor(location, piece, rotation) {
+                this.location = location;
+                this.piece = piece;
+                this.rotation = rotation;
+            }
+        }
+        // Object to track edges to revert
+        class EdgeRevert {
+            constructor(piece, edge) {
+                this.piece = piece;
+                this.edge = edge;
+            }
+        }
+        // Define direction object
+        const Direction = Object.freeze({
+            TOP: 0,
+            RIGHT: 1,
+            BOTTOM: 2,
+            LEFT: 3,
+            getOriginal: function(direction, rotation) {
+                if (!rotation) return direction;
+                return (direction - rotation + 4) % 4;
+            },
+            getOpposite: function(direction) {
+                return (direction + 2) % 4;
+            },
+            rotate: function(direction, count) {
+                if (!count) count = 1;
+                return (directino + count) % 4;
+            }
+        });
+
+        // Define puzzle layout variables
+        const layout1 = new Layout();
+        const layout2 = new Layout();
+        const pieces = {};
+        const unplacedPieces = {};
+        let currentPieceId = 1;
+        // Initialize puzzle layouts
+        function initLayouts() {
+            for (let x = 0; x < WIDTH; x++) {
+                for (let y = 0; y < HEIGHT; y++) {
+                    const piece = new Piece(currentPieceId);
+                    pieces[`${currentPieceId}`] = piece;
+                    const layout1Location = new Location(x, y, piece, 0);
+                    layout1.locations[`${x},${y}`] = layout1Location;
+                    layout1.placePiece(new Option(layout1Location, piece, 0));
+
+                    const layout2Location = new Location(x, y);
+                    layout2.locations[`${x},${y}`] = layout2Location;
+
+                    unplacedPieces[`${currentPieceId}`] = piece;
+
+                    currentPieceId++;
+                }
+            }
+        }
+
+        // Define edge variables
+        let currentEdgeId = 1;
+        // Initialize piece edges - border piece connections to center piece - increments from 1
+        function initPieceEdges() {
+            for (let x = 1; x < WIDTH - 1; x++) {
+                let y = 0;
+                layout1.locations[`${x},${y}`].piece.edges[Direction.BOTTOM] = currentEdgeId;
+                layout1.locations[`${x},${y+1}`].piece.edges[Direction.TOP] = -currentEdgeId;
+                currentEdgeId++;
+                y = HEIGHT - 1;
+                layout1.locations[`${x},${y}`].piece.edges[Direction.TOP] = currentEdgeId;
+                layout1.locations[`${x},${y-1}`].piece.edges[Direction.BOTTOM] = -currentEdgeId;
+                currentEdgeId++;
+            }
+            for (let y = 1; y < HEIGHT - 1; y++) {
+                let x = 0;
+                layout1.locations[`${x},${y}`].piece.edges[Direction.RIGHT] = currentEdgeId;
+                layout1.locations[`${x+1},${y}`].piece.edges[Direction.LEFT] = -currentEdgeId;
+                currentEdgeId++;
+                x = WIDTH - 1;
+                layout1.locations[`${x},${y}`].piece.edges[Direction.LEFT] = currentEdgeId;
+                layout1.locations[`${x-1},${y}`].piece.edges[Direction.RIGHT] = -currentEdgeId;
+                currentEdgeId++;
+            }
+        }
+
+        // Location variables
+        const cornerLocations = [];
+        const edgeLocations   = [];
+        const centerLocations = [];
+        // Initialize location's piece pieceOptions
+        function initPieceOptions() {
+            for (let x = 0; x < WIDTH; x++) {
+                for (let y = 0; y < WIDTH; y++) {
+                    // Corner pieces
+                    if ((x == 0 || x == WIDTH - 1) &&
+                        (y == 0 || y == HEIGHT - 1)) {
+                        initCornerOptions(x, y);
+                        cornerLocations.push(layout2.locations[`${x},${y}`]);
+                    }
+                    // First center piece
+                    else if (x == 1 && y == 1) {
+                        initFirstCenterPieceOptions();
+                        centerLocations.push(layout2.locations[`${x},${y}`]);
+                    }
+                    // Other center pieces
+                    else if (x >= 1 && x <= WIDTH - 2 &&
+                            y >= 1 && y <= HEIGHT - 2) {
+                        initCenterOptions(x, y);
+                        centerLocations.push(layout2.locations[`${x},${y}`]);
+                    }
+                    // Edges
+                    else {
+                        initEdgeOptions(x, y);
+                        edgeLocations.push(layout2.locations[`${x},${y}`]);
+                    }
+                }
+            }
+            // Initialize piece options for this corner location
+            function initCornerOptions(x, y) {
+                const location = layout2.locations[`${x},${y}`];
+                const piece = layout1.locations[`${x},${y}`].piece;
+        
+                let firstDir;
+                if (x == 0 && y == 0) firstDir = 0;
+                if (x == WIDTH - 1 && y == 0) firstDir = 1;
+                if (x == WIDTH - 1 && y == HEIGHT - 1) firstDir = 2;
+                if (x == 0 && y == HEIGHT - 1) firstDir = 3;
+            
+                location.addOption(new Option(location, layout1.locations[`${0},${0}`].piece, (firstDir + 0) % 4));
+                location.addOption(new Option(location, layout1.locations[`${WIDTH-1},${0}`].piece, (firstDir + 3) % 4));
+                location.addOption(new Option(location, layout1.locations[`${WIDTH-1},${HEIGHT-1}`].piece, (firstDir + 2) % 4));
+                location.addOption(new Option(location, layout1.locations[`${0},${HEIGHT-1}`].piece, (firstDir + 1) % 4));
+
+                if (firstDir == 1) firstDir = 3;
+                else if (firstDir == 3) firstDir = 1;
+                piece.addOption(new Option(layout2.locations[`${0},${0}`], piece, (firstDir + 0) % 4));
+                piece.addOption(new Option(layout2.locations[`${WIDTH-1},${0}`], piece, (firstDir + 1) % 4));
+                piece.addOption(new Option(layout2.locations[`${WIDTH-1},${HEIGHT-1}`], piece, (firstDir + 2) % 4));
+                piece.addOption(new Option(layout2.locations[`${0},${HEIGHT-1}`], piece, (firstDir + 3) % 4));
+            }
+            // Initialize piece options for this edge location
+            function initEdgeOptions(x, y) {
+                const location = layout2.locations[`${x},${y}`];
+            
+                for (let i = 0; i < WIDTH; i++) {
+                    for (let j = 0; j < HEIGHT; j++) {
+                        if ((i == 0 || i == WIDTH - 1) &&
+                            (j == 0 || j == WIDTH - 1)) continue
+                        if (i != 0 && i != WIDTH - 1 && j != 0 && j != HEIGHT - 1) continue;
+                        const piece = layout1.locations[`${i},${j}`].piece;
+                        for (let r = 0; r < 4; r++) {
+                            if (x == 0 && !piece.getEdgeId(Direction.RIGHT, r)) continue;
+                            if (x == WIDTH - 1 && !piece.getEdgeId(Direction.LEFT, r)) continue;
+                            if (y == 0 && !piece.getEdgeId(Direction.BOTTOM, r)) continue;
+                            if (y == HEIGHT - 1 && !piece.getEdgeId(Direction.TOP, r)) continue;
+
+                            const option = new Option(location, piece, r);
+                            location.addOption(option);
+                            piece.addOption(option);
+                        }
+                    }
+                }
+            }
+            // Initialize piece options for first center piece location
+            function initFirstCenterPieceOptions() {
+                const location = layout2.locations[`${1},${1}`];
+                let yMax = 1;
+                for (let i = 1; i < Math.ceil(WIDTH/2); i++) {
+                    for (let j = 1; j <= yMax; j++) {
+                        const piece = layout1.locations[`${i},${j}`].piece;
+                        for (let r = 0; r < 4; r++) {
+                            if (piece.getEdgeId(Direction.LEFT, r)) continue;
+                            if (piece.getEdgeId(Direction.TOP, r)) continue;
+                        
+                            const option = new Option(location, piece, r);
+                            location.addOption(option);
+                            piece.addOption(option);
+                        
+                            if (Math.ceil(WIDTH/2) > WIDTH/2 && i == Math.ceil(WIDTH/2)-1 && j == Math.ceil(WIDTH/2)-1) break;
+                        }
+                    }
+                    yMax++;
+                }
+            }
+            // Initialize piece options for this center location
+            function initCenterOptions(x, y) {
+                const location = layout2.locations[`${x},${y}`];
+                for (let i = 1; i <= WIDTH - 2; i++) {
+                    for (let j = 1; j <= HEIGHT - 2; j++) {
+                        const piece = layout1.locations[`${i},${j}`].piece;
+                        for (let r = 0; r < 4; r++) {
+                            if (x == 1 && piece.getEdgeId(Direction.LEFT, r)) continue;
+                            if (x == WIDTH - 2 && piece.getEdgeId(Direction.right, r)) continue;
+                            if (y == 1 && piece.getEdgeId(Direction.TOP, r)) continue;
+                            if (y == HEIGHT - 2 && piece.getEdgeId(Direction.BOTTOM, r)) continue;
+                        
+                            const option = new Option(location, piece, r);
+                            location.addOption(option);
+                            piece.addOption(option);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Find valid arrangement
+        function startBacktrack() {
+            // Set corners
+            backtrackCorners();
+
+            // Find placement for corners
+            function backtrackCorners() {
+                backtrack([...cornerLocations], pruneCorners, backtrackEdges);
+            }
+            // Find placement for edges
+            function backtrackEdges() {
+                const optionsToRevert = [];
+                initialPruneOptions(optionsToRevert);
+                // Prune options based on corner placement
+                function initialPruneOptions(optionsToRevert) {
+                    for (const location of cornerLocations) {
+                        // Get pertinent locations in layout2
+                        const locClockwise = getBorderLocClockwise(layout2, location);
+                        const locCounterClockwise = getBorderLocCounterClockwise(layout2, location);
+                        const loc2Clockwise = getBorderLocClockwise(layout2, location, 2);
+                        const loc2CounterClockwise = getBorderLocCounterClockwise(layout2, location, 2);
+                        // Get pertinent locations in layout1
+                        const cornerPiece = location.piece;
+                        const layout1Loc = layout1.pieceLocations[`${cornerPiece.id}`];
+                        const layout1LocClockwise = getBorderLocClockwise(layout1, layout1Loc);
+                        const layout1LocCounterClockwise = getBorderLocCounterClockwise(layout1, layout1Loc);
+                        const layout1Loc2Clockwise = getBorderLocClockwise(layout1, layout1Loc, 2);
+                        const layout1Loc2CounterClockwise = getBorderLocCounterClockwise(layout1, layout1Loc, 2);
+
+                        // Remove options 1 or 2 spaces clockwise in layout1 from 1 clockwise space in layout2
+                        locClockwise.removeAllPieceOptions(layout1LocClockwise.piece, optionsToRevert);
+                        locClockwise.removeAllPieceOptions(layout1Loc2Clockwise.piece, optionsToRevert);
+                        // Remove options 1 or 2 spaces counterclockwise in layout1 from 1 counterclockwise space in layout2
+                        locCounterClockwise.removeAllPieceOptions(layout1LocCounterClockwise.piece, optionsToRevert);
+                        locCounterClockwise.removeAllPieceOptions(layout1Loc2CounterClockwise.piece, optionsToRevert);
+                        // Remove options 1 space clockwise in layout1 from 2 clockwise space in layout2
+                        loc2Clockwise.removeAllPieceOptions(layout1LocClockwise.piece, optionsToRevert);
+                        // Remove options 1 space counterclockwise in layout1 from 2 counterclockwise space in layout2
+                        loc2CounterClockwise.removeAllPieceOptions(layout1LocCounterClockwise.piece, optionsToRevert);
+                    }
+                }
+                backtrack([...edgeLocations], pruneEdges, saveSolution/*backtrackCenter*/);
+            }
+            // Find valid center arrangement
+            function backtrackCenter() {
+                backtrack([...centerLocations], pruneCenter, saveSolution);
+            }
+
+            // Generic backtrack function for going through an array of locations and selecting an option
+            function backtrack(locations, pruneFunction, endFunction) {
+                
+                let locationSelected = getLocationWithFewestOptions(locations);
+                // Get location with fewest options
+                function getLocationWithFewestOptions(locations) {
+                    let locationSelected = null;
+                    for (const location of locations) {
+                        if (locationSelected === null || location.pieceOptionCount < locationSelected.pieceOptionCount)
+                            locationSelected = location;
+                    }
+                    return locationSelected;
+                }
+
+                // Remove location selected from locations list
+                locations.splice(locations.indexOf(locationSelected), 1);
+
+                // Loop through options
+                for (const key in locationSelected.pieceOptions) {
+                    const option = locationSelected.pieceOptions[key];
+                    //  Set option piece as location piece
+                    layout2.placePiece(option);
+
+                    //  If at end, run end function
+                    if (locations.length === 0) {
+                        endFunction();
+                        //  Remove piece placed
+                        layout2.removePiece(option);
+                        continue;
+                    }
+
+                    // Track options removed and edges set by this placement
+                    const optionsToRevert = [];
+                    const edgesToRevert = [];
+                    // Call prune function
+                    const dead = pruneFunction(locations, locationSelected, optionsToRevert, edgesToRevert);
+                    
+                    // If not dead backtrack again
+                    if (!dead) backtrack(locations, pruneFunction, endFunction);
+
+                    // Revert any changes to options
+                    revertOptions(optionsToRevert);
+                    // Revert any changes to edges
+                    revertEdges(edgesToRevert);
+
+                    // Remove piece placed
+                    layout2.removePiece(option);
+
+                    // Continue to next option
+                }
+                // Add location selected back to list
+                locations.push(locationSelected);
+            }
+
+            // Prune options for edge locations
+            function pruneCorners(locations, location, optionsToRevert, edgesToRevert) {
+                // Removes the piece just placed from all options in locations specified
+                const piece = location.piece;
+                for (const location of locations) {
+                    if (location.piece) continue;
+                    location.removeAllPieceOptions(piece, optionsToRevert);
+                    /*for (let r = 0; r < 4; r++) {
+                        const option = location.pieceOptions[`${piece.id},${r}`];
+                        if (option) {
+                            location.removeOption(option, optionsToRevert);
+                            piece.removeOption(option, optionsToRevert);
+                        }
+                    }*/
+                }
+            }
+
+            // Prune options for edge locations
+            function pruneEdges(locations, location, optionsToRevert, edgesToRevert) {
+                const piece = location.piece;
+                const updateOptionPieces = [];
+                updateOptionPieces.push(piece);
+
+                // Update edges
+                function updateEdges() {
+                    // Get edge this location is on
+                    let edgeOfPuzzle;
+                    if (location.x == 0) edgeOfPuzzle = Direction.LEFT;
+                    else if (location.x == WIDTH - 1) edgeOfPuzzle = Direction.RIGHT;
+                    else if (location.y == 0) edgeOfPuzzle = Direction.TOP;
+                    else if (location.y == HEIGHT - 1) edgeOfPuzzle = Direction.BOTTOM;
+                    // Update piece edges on correct sides
+                    // Right/Left sets Top/Bottom and vice versa
+                    if (setEdge(location, piece, rotate(edgeOfPuzzle, 1))) {
+                        // Update options based on new edges
+                    }
+                    if (setEdge(location, piece, rotate(edgeOfPuzzle, 3))) {
+                        // Update options based on new edges
+                    }
+
+                    // Sets this piece and neighbor piece's edges to match, if neighbor is found and they
+                    // are not already set.
+                    function setEdge(location, piece, direction) {
+                        let otherPiece = layout2.getLocationInDirection(location, direction).piece;
+                        if (otherPiece && !piece.edges[direction]) {
+                            piece.setEdgeId(direction, currentEdgeId, edgesToRevert);
+                            currentEdgeId++;
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+                
+                // Set edges
+                // Remove options from locations/pieces that don't work
+                // Constraints:
+                //  Pieces like 1-2 in layout1 can't be 1-2 or 1-_-2 in layout2
+                //   Both in front and behind
+                //  Pieces like 1-_-2 in layout1 can't be 1-2 in layout2
+            }
+
+            // Prune options for center locations
+            function pruneCenter(locations, location, optionsToRevert, edgesToRevert) {
+            
+            }
+
+            // Get border location clockwise of another border location
+            function getBorderLocClockwise(layout, location, amount) {
+                if (!amount) amount = 1;
+                if (amount < 0) return null;
+                // If on top-left corner, return piece to right
+                if (location.x == 0 && location.y == 0) {
+                    if (amount > 1) return getBorderLocClockwise(layout, layout.getLocationInDirection(location, Direction.RIGHT), amount-1);
+                    return layout.getLocationInDirection(location, Direction.RIGHT);
+                }
+                // Else if on left, return piece above
+                else if (location.x == 0) {
+                    if (amount > 1) return getBorderLocClockwise(layout, layout.getLocationInDirection(location, Direction.TOP), amount-1);
+                    return layout.getLocationInDirection(location, Direction.TOP);
+                }
+                // Else if on bottom, return piece to left
+                else if (location.y == HEIGHT - 1) {
+                    if (amount > 1) return getBorderLocClockwise(layout, layout.getLocationInDirection(location, Direction.LEFT), amount-1);
+                    return layout.getLocationInDirection(location, Direction.LEFT);
+                }
+                // Else if on right, return piece on bottom
+                else if (location.x == WIDTH - 1) {
+                    if (amount > 1) return getBorderLocClockwise(layout, layout.getLocationInDirection(location, Direction.BOTTOM), amount-1);
+                    return layout.getLocationInDirection(location, Direction.BOTTOM);
+                }
+                // Else if on top, return  piece on right
+                else if (location.y == 0) {
+                    if (amount > 1) return getBorderLocClockwise(layout, layout.getLocationInDirection(location, Direction.RIGHT), amount-1);
+                    return layout.getLocationInDirection(location, Direction.RIGHT);
+                }
+                // Otherwise, return null
+                return null;
+            }
+
+            // Get border location counterclockwise of another border location
+            function getBorderLocCounterClockwise(layout, location, amount) {
+                if (!amount) amount = 1;
+                if (amount < 0) return null;
+
+                // If on top-left corner, return piece to bottom
+                if (location.x == 0 && location.y == 0) {
+                    if (amount > 1) return getBorderLocCounterClockwise(layout, layout.getLocationInDirection(location, Direction.BOTTOM), amount-1);
+                    return layout.getLocationInDirection(location, Direction.BOTTOM);
+                }
+                // Else if on top, return  piece on left
+                else if (location.y == 0) {
+                    if (amount > 1) return getBorderLocCounterClockwise(layout, layout.getLocationInDirection(location, Direction.LEFT), amount-1);
+                    return layout.getLocationInDirection(location, Direction.LEFT);
+                }
+                // Else if on right, return piece on top
+                else if (location.x == WIDTH - 1) {
+                    if (amount > 1) return getBorderLocCounterClockwise(layout, layout.getLocationInDirection(location, Direction.TOP), amount-1);
+                    return layout.getLocationInDirection(location, Direction.TOP);
+                }
+                // Else if on bottom, return piece to right
+                else if (location.y == HEIGHT - 1) {
+                    if (amount > 1) return getBorderLocCounterClockwise(layout, layout.getLocationInDirection(location, Direction.RIGHT), amount-1);
+                    return layout.getLocationInDirection(location, Direction.RIGHT);
+                }
+                // Else if on left, return piece bottom
+                else if (location.x == 0) {
+                    if (amount > 1) return getBorderLocCounterClockwise(layout, layout.getLocationInDirection(location, Direction.BOTTOM), amount-1);
+                    return layout.getLocationInDirection(location, Direction.BOTTOM);
+                }       
+                
+                // Otherwise, return null
+                return null;
+            }
+        
+            // Revert options removed from pruning
+            function revertOptions(optionsToRevert) {
+                for (const option of optionsToRevert) {
+                    option.piece.addOption(option);
+                    option.location.addOption(option);
+                }
+            }
+            
+            // Revert edges changed from placing pieces
+            function revertEdges(revertEdges) {
+                for (const revertEdge of revertEdges) {
+                    revertEdge.piece.edges[revertEdge.edge] = null;
+                }
+            }
+        }
+
+        // Saves the solution
+        function saveSolution() {
+            throw Error('Done!');
+        }
+
+        run();
+        // Calls the necessary functions
+        function run() {
+            initLayouts();
+            initPieceEdges();
+            initPieceOptions();
+            console.log(layout1);
+            console.log(layout2);
+            console.log(pieces);
+            startBacktrack();
+        }
+    </script>
+</head>
+<body>
+</body>
+</html>

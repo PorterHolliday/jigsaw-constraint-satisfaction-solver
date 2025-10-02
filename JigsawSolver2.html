@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Jigsaw puzzle 2</title>
+    <script>
+        const SIZE = 7;
+        const INNER_START = 1;
+        const INNER_END = SIZE - 2;
+        const STATIC_EDGE_MAX = (SIZE - 2) * 4;
+        const MAX_DYNAMIC_ID = ((SIZE - 2) * (SIZE - 2) * 4 - STATIC_EDGE_MAX * 3) / 4 + STATIC_EDGE_MAX;
+
+        let pieceId = 1;
+		let edgeId = 1;
+        const pieceCoords = {};
+		const sideLookup = {};
+		const innerSpaces = [];
+		const innerPieceIds = [];
+		const edgeSpaces = [];
+		const cornerSpaces = [];
+        for (let y = 0; y < SIZE; y++) {
+            for (let x = 0; x < SIZE; x++) {
+                pieceCoords[pieceId] = { x, y };
+				if (x >= INNER_START && x <= INNER_END &&
+					y >= INNER_START && y <= INNER_END) {
+					innerSpaces.push(`${x},${y}`);
+					innerPieceIds.push(pieceId);
+					if (x == INNER_START) {
+						sideLookup[`${pieceId},${3}`] = edgeId;
+					} else if (x == INNER_END) {
+						sideLookup[`${pieceId},${1}`] = edgeId;
+					}
+					if (y == INNER_START) {
+						sideLookup[`${pieceId},${0}`] = edgeId;
+					} else if (y == INNER_END) {
+						sideLookup[`${pieceId},${2}`] = edgeId;
+					}
+				} else if ((x == 0 || x == SIZE - 1) &&
+							(y == 0 || y == SIZE - 1)) {
+					cornerSpaces.push(`${x},${y}`);
+				} else {
+					edgeSpaces.push(`${x},${y}`);
+				}
+				pieceId++;
+            }
+        }
+
+        //const innerPieceIds = Object.entries(pieceCoords)
+        //    .filter(([_,c]) => c.x>=INNER_START&&c.x<=INNER_END&&c.y>INNER_START&&c.y<=INNER_END).map(([pieceId])=>Number(pieceId));
+
+        const ROTATIONS = [ 0, 90, 180, 270 ];
+        const dynamicSideMap = {};
+        let nextDynamicId;
+        function initDynamicIdCounter() {
+            nextDynamicId = STATIC_EDGE_MAX + 1;
+        }
+        function generateNextDynamicId() { 
+			return nextDynamicId++;
+		}
+        function getSideId(pieceId, rotation, direction) {
+            const origDirection = getOrigDirection(rotation, direction);
+            const key = `${pieceId},${origDirection}`;
+            return dynamicSideMap[key]!==undefined?dynamicSideMap[key]:sideLookup[key];
+        }
+		function isStaticSide(pieceId, rotation, direction) {
+			const origDirection = getOrigDirection(rotation, direction);
+			const key = `${pieceId},${origDirection}`;
+			return sideLookup[key] !== undefined;
+		}
+
+        function assignDynamic(pieceId, rotation, direction, value, changes) {
+            const origDirection = getOrigDirection(rotation, direction);
+            const key = `${pieceId},${origDirection}`;
+            dynamicSideMap[key] = value;
+            changes.push(key);
+        }
+
+        function initDomains() {
+            const domains = {};
+            for (const coords of innerSpaces) {
+                domains[coords] = [];
+                for (const p of innerPieceIds)
+                    for (const r of ROTATIONS)
+                        domains[coords].push({ pieceId: p, rotation: r });
+            }
+            return domains;
+        }
+		function cloneDomains(domains) {
+			const result = {};
+			for (const key in domains) result[key] = domains[key].slice();
+			return result;
+		}
+        const assignment = {}, solutions = [], maxSolution = 2;
+		function getNeighbors(x, y) {
+			return [
+				{ direction: 0, nx: x, ny: y - 1 },
+				{ direction: 1, nx: x + 1, ny: y },
+				{ direction: 2, nx: x, ny: y + 1 },
+				{ direction: 3, nx: x - 1, ny: y }
+			];
+		}
+		function getCoords(x, y, direction) {
+			if (direction == 0) {
+				return { x: x, y: y - 1 };
+			} else if (direction == 1) {
+				return { x: x + 1, y: y };
+			} else if (direction == 2) {
+				return { x: x, y: y + 1 };
+			} else if (direction == 3) {
+				return { x: x - 1, y: y };
+			}
+		}
+		function getOrigDirection(rotation, direction) {
+			return direction - rotation + 4 % 4;
+		}
+
+        function pruneNeighbors(coord, value, domains, changes) {
+            const [x, y] = coord.split(',').map(Number);
+			const pieceIdA = value.pieceId;
+			const rotationA = value.rot;
+            const neighbors = [`${x-1},${y}`,`${x+1},${y}`,`${x},${y-1}`,`${x},${y+1}`];
+            for (const { direction, nx, ny } of getNeighbors(x, y)) {
+				const neighborCoords = `${nx},${ny}`;
+                if (!domains[neighborCoords]) continue;
+				const oppositeDirection = (direction + 2) % 4;
+                domains[neighborCoords] = domains[neighborCoords].filter(option => {
+					if(option.pieceId === pieceIdA) return false;
+					
+					const pieceIdB = option.pieceId;
+					const rotationB = option.rotation;
+
+					let sideA = getSideId(pieceIdA, rotationA, direction);
+					let sideB = getSideId(pieceIdB, rotationB, oppositeDirection);
+					if (sideA === undefined && sideB === undefined) {
+						if (nextDynamicId > MAX_DYNAMIC_ID) return false;
+						// TO-DO: Check if these can be assigned or not
+						const newId = generateNextDynamicId();
+						assignDynamic(pieceIdA, rotationA, direction, newId, changes);
+						assignDynamic(pieceIdB, rotationB, oppositeDirection, -newId, changes);
+						sideA = newId;
+						sideB = -newId;
+					} else if (sideA === undefined && isStaticSide(pieceIdB, rotationB, oppositeDirection)) {
+						// TO-DO: Check if this can be assigned or not
+						assignDynamic(pieceIdA, rotationA, direction, -sideB, changes);
+						sideA = -sideB;
+					} else if (isStaticSide(pieceIdA, rotationA, direction) && sideB === undefined) {
+						/*const pieceCoordsB = pieceCoords(pieceIdB);
+						const origDirectionB = getOrigDirection(rotationB, oppositeDirection);
+						const pieceIdC = innerPieceIds(getCoords(pieceCoordsB.x, pieceCoordsB.y, origDirectionB));
+						const sideC = getSideId(pieceIdC, 0, (origDirectionB + 2) % 4;
+						if (sideC !== undefined) return false;
+						if (nx ==*/
+						// TO-DO: Check if this can be assigned or not
+						assignDynamic(pieceIdB, rotationB, oppositeDirection, -sideA, changes);
+						sideB = -sideA;
+					} else if (Math.abs(sideA) <= STATIC_EDGE_MAX &&
+								Math.abs(sideB) <= STATIC_EDGE_MAX)	{
+						return false;
+					}
+
+					// final compatibility with dynamic + static
+					return sideA == -sideB;
+                });
+            }
+        }
+		
+		function backtrack(domains) {
+			if (solutions.length >= maxSolution) return;
+			const unassigned = innerSpaces.filter(v => !assignment[v]);
+			if (unassigned.length === 0) {
+				solutions.push({ ...assignment });
+				return;
+			}
+			unassigned.sort((a, b) => domains[a].length - domains[b].length);
+			const spaceToAssign = unassigned[0];
+			
+			for (const option of domains[spaceToAssign]) {
+				if (Object.values(assignment).some((v) => v?.pieceId === option.pieceId)) continue;
+				
+				assignment[spaceToAssign] = option;
+				const domainCopy = cloneDomains(domains);
+				for (const key in domainCopy) {
+					if (key !== spaceToAssign)
+						domainCopy[key] = domainCopy[key].filter(opt => opt.pieceId !== option.pieceId);
+				}
+				const dynamicId = nextDynamicId;
+				const changes = [];
+				pruneNeighbors(spaceToAssign, option, domainCopy, changes);
+
+				const dead = innerSpaces.some(s => !assignment[s] && domainCopy[s].length === 0);
+				if (!dead) backtrack(domainCopy);
+				
+				nextDynamicId = dynamicId;
+				changes.forEach(key => { delete dynamicSideMap[key]; });
+				delete assignment[spaceToAssign];
+				
+				if (solutions.length >= maxSolution) return;
+			}
+		}
+		
+		initDynamicIdCounter();
+		backtrack(initDomains());
+		console.log(`Found ${solutions.length} solutions`, solutions);
+    </script>
+</head>
+
+<body>
+</body>
+
+</html>

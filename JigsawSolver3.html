@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Jigsaw puzzle 3</title>
+    <script>
+        console.time('timer1');
+        console.time('timer2');
+        const WIDTH = 6;
+        const HEIGHT = 6;
+        const STATIC_ID_MAX = (WIDTH - 2) * 2 + (HEIGHT - 2) * 2;
+        const DYNAMIC_ID_MAX = ((WIDTH - 2) * (HEIGHT - 2) * 4 - STATIC_ID_MAX * 3) / 4 + STATIC_ID_MAX;
+		console.log(STATIC_ID_MAX, DYNAMIC_ID_MAX);
+
+        const layout1 = {};
+        const layout1Coords = {};
+        const layout2 = {};
+        const layout2Coords = {};
+        const unplacedPieces = {};
+        let pieceId = 1;
+        function initSpaces() {
+            for (let x = 0; x < WIDTH; x++) {
+                for (let y = 0; y < HEIGHT; y++) {
+                    layout1[`${x},${y}`] = pieceId;
+                    layout1Coords[`${pieceId}`] = { x: x, y: y };
+                    layout2[`${x},${y}`] = new Space(x, y);
+                    unplacedPieces[`${pieceId}`] = true;
+                    pieceId++;
+                }
+            }
+        }
+        const TOP = 0;
+        const RIGHT = 1;
+        const BOTTOM = 2;
+        const LEFT = 3;
+        let edgeId = 1;
+        const staticSides = {};
+        const dynamicSides = {};
+        function initStaticSides() {
+            for (let x = 1; x <= WIDTH - 2; x++) {
+                for (let y = 1; y <= HEIGHT - 2; y++) {
+                    if (x == 1) {
+                        staticSides[`${layout1[`${x},${y}`]},${LEFT}`] = edgeId;
+                        staticSides[`${layout1[`${x-1},${y}`]},${RIGHT}`] = -edgeId;
+                        edgeId++;
+                    } else if (x == WIDTH - 2) {
+                        staticSides[`${layout1[`${x},${y}`]},${RIGHT}`] = edgeId;
+                        staticSides[`${layout1[`${x+1},${y}`]},${LEFT}`] = -edgeId;
+                        edgeId++;
+                    }
+                    if (y == 1) {
+                        staticSides[`${layout1[`${x},${y}`]},${TOP}`] = edgeId;
+                        staticSides[`${layout1[`${x},${y-1}`]},${BOTTOM}`] = -edgeId;
+                        edgeId++;
+                    } else if (y == HEIGHT - 2) {
+                        staticSides[`${layout1[`${x},${y}`]},${BOTTOM}`] = edgeId;
+                        staticSides[`${layout1[`${x},${y+1}`]},${TOP}`] = -edgeId;
+                        edgeId++;
+                    }
+                }
+            }
+            edgeId--;
+        }
+        function initOptions() {
+            for (let x = 0; x < WIDTH; x++) {
+                for (let y = 0; y < HEIGHT; y++) {
+                    // Corner pieces
+                    if ((x == 0 || x == WIDTH - 1) &&
+                        (y == 0 || y == HEIGHT - 1)) {
+                        initCornerOptions(x, y);
+                    }
+                    // First inner piece
+                    else if (x == 1 && y == 1) {
+                        initFirstInnerPiece();
+                    }
+                    // Other inner pieces
+                    else if (x >= 1 && x <= WIDTH - 2 &&
+                            y >= 1 && y <= HEIGHT - 2) {
+                        initInnerOptions(x, y);
+                    }
+                    // Edges
+                    else {
+                        initEdgeOptions(x, y);
+                    }
+                }
+            }
+        }
+        function initCornerOptions(x, y) {
+            const space = layout2[`${x},${y}`];
+       
+            let firstDir;
+            if (x == 0 && y == 0) firstDir = 0;
+            if (x == WIDTH - 1 && y == 0) firstDir = 1;
+            if (x == WIDTH - 1 && y == HEIGHT - 1) firstDir = 2;
+            if (x == 0 && y == HEIGHT - 1) firstDir = 3;
+           
+            space.options[`${layout1[`${0},${0}`]},${firstDir}`] = { pieceId: layout1[`${0},${0}`], rotation: firstDir };
+            space.optionCount++;
+            space.options[`${layout1[`${WIDTH-1},${0}`]},${(firstDir + 3) % 4}`] = { pieceId: layout1[`${WIDTH-1},${0}`], rotation: (firstDir + 3) % 4 };
+            space.optionCount++;
+            space.options[`${layout1[`${WIDTH-1},${HEIGHT-1}`]},${(firstDir + 2) % 4}`] = { pieceId: layout1[`${WIDTH-1},${HEIGHT-1}`], rotation: (firstDir + 2) % 4 };
+            space.optionCount++;
+            space.options[`${layout1[`${0},${HEIGHT-1}`]},${(firstDir + 1) % 4}`] = { pieceId: layout1[`${0},${HEIGHT-1}`], rotation: (firstDir + 1) % 4 };
+            space.optionCount++;
+        }
+        function initEdgeOptions(x, y) {
+            //console.log(x, y);
+            const space = layout2[`${x},${y}`];
+           
+            for (let i = 0; i < WIDTH; i++) {
+                for (let j = 0; j < HEIGHT; j++) {
+                    if ((i == 0 || i == WIDTH - 1) &&
+                        (j == 0 || j == WIDTH - 1)) continue
+                    if (i != 0 && i != WIDTH - 1 && j != 0 && j != HEIGHT - 1) continue;
+                    const pieceId = layout1[`${i},${j}`];
+                    for (let r = 0; r < 4; r++) {
+                        if (x == 0 && getSideId(pieceId, r, 1) === undefined) continue;
+                        if (x == WIDTH - 1 && getSideId(pieceId, r, 3) === undefined) continue;
+                        if (y == 0 && getSideId(pieceId, r, 2) === undefined) continue;
+                        if (y == HEIGHT - 1 && getSideId(pieceId, r, 0) === undefined) continue;
+                        //console.log(pieceId, r, 1, getSideId(pieceId, r, 1));
+                        space.options[`${pieceId},${r}`] = { pieceId: pieceId, rotation: r };
+                        space.optionCount++;
+                    }
+                }
+            }
+        }
+        function initFirstInnerPiece() {
+            const space = layout2[`${1},${1}`];
+            let yMax = 1;
+            for (let i = 1; i < Math.ceil(WIDTH/2); i++) {
+                for (let j = 1; j <= yMax; j++) {
+                    const pieceId = layout1[`${i},${j}`];
+                    for (let r = 0; r < 4; r++) {
+                        if (getSideId(pieceId, r, 3) !== undefined) continue;
+                        if (getSideId(pieceId, r, 0) !== undefined) continue;
+                       
+                        space.options[`${pieceId},${r}`] = { pieceId: pieceId, rotation: r };
+                        space.optionCount++;
+                       
+                        if (Math.ceil(WIDTH/2) > WIDTH/2 && i == Math.ceil(WIDTH/2)-1 && j == Math.ceil(WIDTH/2)-1) break;
+                    }
+                }
+                yMax++;
+            }
+        }
+        function initInnerOptions(x, y) {
+            const space = layout2[`${x},${y}`];
+            for (let i = 1; i <= WIDTH - 2; i++) {
+                for (let j = 1; j <= HEIGHT - 2; j++) {
+                    const pieceId = layout1[`${i},${j}`];
+                    for (let r = 0; r < 4; r++) {
+                        if (x == 1 && getSideId(pieceId, r, 3) !== undefined) continue;
+                        if (x == WIDTH - 2 && getSideId(pieceId, r, 1) !== undefined) continue;
+                        if (y == 1 && getSideId(pieceId, r, 0) !== undefined) continue;
+                        if (y == HEIGHT - 2 && getSideId(pieceId, r, 2) !== undefined) continue;
+                       
+                        space.options[`${pieceId},${r}`] = { pieceId: pieceId, rotation: r };
+                        space.optionCount++;
+                    }
+                }
+            }
+        }
+        for (const key in layout2) {
+            const space = layout2[key];
+            space.previousOptions.push({ options: space.options, optionCount: space.optionCount });
+        }
+       
+        class Space {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.optionSelected;
+                this.options = {};
+                this.optionCount = 0;
+                this.previousOptions = [];
+				this.optionsRemoved = [];
+            }
+            revertOptions() {
+                this.options = this.previousOptions.splice(this.previousOptions.length - 1, 1)[0];
+            }
+        }
+        class Option {
+            constructor(piece, rotation) {
+                this.piece = piece;
+                this.rotation = rotation;
+            }
+        }
+
+        const spaceLog = [];
+        let count = 0;
+        function backtrack() {
+            let spaceToAssign;
+            let unassignedCount = 0;
+            for (let x = 1; x <= WIDTH - 2; x++) {
+                for (let y = 1; y <= HEIGHT - 2; y++) {
+                    if (!layout2[`${x},${y}`].optionSelected) {
+                        unassignedCount++;
+                        if (spaceToAssign === undefined ||
+                            layout2[`${x},${y}`].optionCount < spaceToAssign.optionCount) {
+                                spaceToAssign = layout2[`${x},${y}`];
+                                /*if (spaceToAssign.optionCount == 0) {
+                                    console.log(spaceLog);
+                                    console.log(spaceToAssign, 'No options');
+                                    throw Error('');
+                                }*/
+                        }
+                    }
+                }
+            }
+			//if (unassignedCount <= 1) { saveSolution(); return true; }
+            if (spaceToAssign === undefined) {
+				//console.log('here');
+                saveSolution();
+                return true;
+            }
+            spaceLog.push(spaceToAssign);
+
+            if (debug && false) goToOption = goToSolution[spaceToAssign.y][spaceToAssign.x];
+            //console.log(spaceToAssign.x, spaceToAssign.y, goToOption);
+            for (const option in spaceToAssign.options) {
+                //console.log('217', spaceToAssign, option);
+                if (debug  && false && option != goToOption) continue;
+                const optionPiece = spaceToAssign.options[option];
+                let skipOption = false;
+				//if (optionPiece === undefined) { console.log('Error', spaceToAssign, option); return true; }
+                for (let r = 0; r < 4; r++) {
+                    if (Math.abs(getSideId(optionPiece.pieceId, optionPiece.rotation, r)) <= STATIC_ID_MAX &&
+                        dynamicSides[`${optionPiece.pieceId},${getOrigDirection(optionPiece.rotation, r)}`] !== undefined) {
+                            if ((r == 0 && spaceToAssign.y != 1) ||
+                                (r == 1 && spaceToAssign.x != WIDTH - 2) ||
+                                (r == 2 && spaceToAssign.y != HEIGHT - 2) ||
+                                (r == 3 && spaceToAssign.x != 1)) {
+                                    skipOption = true;
+                            }
+                    }  
+                }
+                if (skipOption) continue;
+				//console.log(spaceToAssign);
+               
+                spaceToAssign.optionSelected = optionPiece;
+                layout2Coords[optionPiece.pieceId] = { x: spaceToAssign.x, y: spaceToAssign.y };
+               
+				const optionsRemoved = {};
+                for (const key in layout2) {
+                    const space = layout2[key];
+					if (space.optionSelected !== undefined) continue;
+					optionsRemoved[key] = { options: [], optionCount: space.optionCount };
+					const removed = {};
+					let somethingRemoved = false;
+                    for (let r = 0; r < 4; r++) {
+                        if (space.options[`${optionPiece.pieceId},${r}`]) {
+							somethingRemoved = true;
+							removed[`${optionPiece.pieceId},${r}`] = space.options[`${optionPiece.pieceId},${r}`];
+                            delete space.options[`${optionPiece.pieceId},${r}`];
+							space.optionCount--;
+                        }
+                    }
+					if (somethingRemoved) optionsRemoved[key].options.push(removed);
+                }
+				//console.log(optionsRemoved);
+               
+                const dynamicId = edgeId;
+                const sideChanges = [];
+                let solved = false;
+                let again = updateSides(spaceToAssign, optionPiece, sideChanges, optionsRemoved);
+				//console.log(again);
+                //console.log('before');
+                if (again) {
+                    //console.log('in');
+                    solved = backtrack();
+                }
+                if (solved) return true;
+
+                for (const key in optionsRemoved) {
+                    const space = layout2[key];
+					for (const option of optionsRemoved[key].options) {
+						for (const key2 in option) {
+							space.options[key2] = option[key2];
+						}
+					}
+                    space.optionCount = optionsRemoved[key].optionCount;
+                }
+
+                revertSides(sideChanges);
+                edgeId = dynamicId;
+                delete layout2Coords[optionPiece.pieceId];
+				//break;
+				//if (spaceToAssign.x == 1 && spaceToAssign.y == 1) { console.log('here'); break; }
+                spaceToAssign.optionSelected = undefined;
+            }
+            /*console.log(spaceLog);
+            console.log(spaceToAssign);
+            throw Error('Out of loop');*/
+			spaceLog.pop();
+        }
+
+        function updateSides(space, placed, sideChanges, optionsRemoved) {
+            if(!updateSide(space, placed, TOP, layout2[`${space.x},${space.y-1}`].optionSelected, sideChanges, optionsRemoved)) return false;
+            if(!updateSide(space, placed, RIGHT, layout2[`${space.x+1},${space.y}`].optionSelected, sideChanges, optionsRemoved)) return false;
+            if(!updateSide(space, placed, BOTTOM, layout2[`${space.x},${space.y+1}`].optionSelected, sideChanges, optionsRemoved)) return false;
+            if(!updateSide(space, placed, LEFT, layout2[`${space.x-1},${space.y}`].optionSelected, sideChanges, optionsRemoved)) return false;
+            return true;
+        }
+
+        function updateSide(space, placed, direction, other, sideChanges, optionsRemoved) {
+            const oppositeDir = (direction + 2) % 4;
+            const placedCoords = layout1Coords[placed.pieceId];
+            const placedSide = getSideId(placed.pieceId, placed.rotation, direction);
+            if (!other) {
+                const otherSpaceCoords = getCoordsInDirection(space.x, space.y, direction);
+                const otherSpace = layout2[`${otherSpaceCoords}`];
+				const options = {};
+                const removed = {};
+                let optionCount = 0;
+                let prunedCount = 0;
+				for (const option in otherSpace.options) {
+                    const optionPiece = otherSpace.options[option];
+                    const optionSide = getSideId(optionPiece.pieceId, optionPiece.rotation, oppositeDir);
+                    if (placedSide === undefined &&
+                        Math.abs(optionSide) > STATIC_ID_MAX) {
+							//console.log('here');
+							removed[option] = otherSpace.options[option];
+                            prunedCount++;
+                    } else if (Math.abs(placedSide) <= STATIC_ID_MAX &&
+								staticSides[`${placed.pieceId},${getOrigDirection(placed.rotation, direction)}`] !== undefined &&
+                                optionSide !== undefined) {
+							//console.log(placedSide, optionSide)
+							removed[option] = otherSpace.options[option];
+                            prunedCount++;
+                    } else if (Math.abs(placedSide) > STATIC_ID_MAX &&
+                                optionSide != -placedSide) {
+							removed[option] = otherSpace.options[option];
+                            prunedCount++;
+                    } else if (placedSide === undefined &&
+								optionSide === undefined &&
+								edgeId >= DYNAMIC_ID_MAX) {
+							removed[option] = otherSpace.options[option];
+                            prunedCount++;
+					} else if (placedSide !== undefined && 
+								optionSide !== undefined &&
+								placedSide != -optionSide) {
+							removed[option] = otherSpace.options[option];
+                            prunedCount++;
+					} else {
+                        options[option] = optionPiece;
+                        optionCount++;
+                    }
+                }
+				/*if (placedSide === undefined) {
+					// Check if can placed static side next to it
+					let canPlaceStaticSides = true;
+					const neighborId = getLayout1Neighbor(placed, getOrigDirection(placed.rotation, direction));
+					const neighborCoords = layout2Coords[`${neighborId}`];
+					if (neighborCoords !== undefined) {
+						if (neighborCoords.x != 1 && neighborCoords.x != WIDTH - 2 &&
+							neighborCoords.y != 1 && neighborCoords.y != HEIGHT - 2) {
+								canPlaceStaticSides = false;
+						} else {
+							const neighbor = layout2[`${neighborCoords.x},${neighborCoords.y}`].optionSelected;
+							const neighborSideDir = (getOrigDirection(placed.rotation, direction) + 2 + neighbor.rotation) % 4;
+							if (placed.pieceId == 13 && neighbor.pieceId == 18) {
+								console.log('here');
+							}
+							if (getSideId(neighbor, 0, neighborSideDir) !== undefined)
+								canPlaceStaticSides = false;
+							if (!(neighborCoords.x == 1 && neighborSideDir == 3) &&
+								!(neighborCoords.x == WIDTH - 2 && neighborSideDir == 1) &&
+								!(neighborCoords.y == 1 && neighborSideDir == 0) &&
+								!(neighborCoords.y == HEIGHT - 2 && neighborSideDir == 2)) {
+									canPlaceStaticSides = false;
+							}
+						}
+					}
+					
+					for (const option in otherSpace.options) {
+						const optionPiece = otherSpace.options[option];
+						const optionSide = getSideId(optionPiece.pieceId, optionPiece.rotation, oppositeDir);
+						if (optionSide !== undefined &&
+							Math.abs(optionSide) > STATIC_ID_MAX) {
+							removed[option] = optionPiece;
+							prunedCount++;
+						} else if (staticSides[`${optionPiece.pieceId},${getOrigDirection(optionPiece.rotation, oppositeDir)}`] !== undefined &&
+									staticSides[`${optionPiece.pieceId},${getOrigDirection(optionPiece.rotation, oppositeDir)}`] > 0 &&
+									!canPlaceStaticSides) {
+							removed[option] = optionPiece;
+							prunedCount++;
+						} else if (canPlaceStaticSides && 
+									optionPiece.pieceId == neighborId &&
+									staticSides[`${optionPiece.pieceId},${getOrigDirection(optionPiece.rotation, oppositeDir)}`] !== undefined &&
+									staticSides[`${optionPiece.pieceId},${getOrigDirection(optionPiece.rotation, oppositeDir)}`] > 0) {
+							if (otherSpace.x != 1 && otherSpace.x != WIDTH - 2 &&
+								otherSpace.y != 1 && otherSpace.y != HEIGHT - 2) {
+									removed[option] = optionPiece;
+									prunedCount++;
+									continue;
+							}
+							const optionSideDir = (getOrigDirection(placed.rotation, direction) + 2 + optionPiece.rotation) % 4;
+							if (!(otherSpace.x == 1 && optionSideDir == 3) &&
+								!(otherSpace.x == WIDTH - 2 && optionSideDir == 1) &&
+								!(otherSpace.y == 1 && optionSideDir == 0) &&
+								!(otherSpace.y == HEIGHT - 2 && optionSideDir == 2)) {
+									removed[option] = optionPiece;
+									prunedCount++;
+							}
+						} else if (Math.abs(optionSide) <= STATIC_ID_MAX &&
+									staticSides[`${optionPiece.pieceId},${getOrigDirection(optionPiece.rotation, oppositeDir)}`] === undefined) {
+							removed[option] = optionPiece;
+							prunedCount++;
+						} else if (optionSide === undefined && 
+									edgeId >= DYNAMIC_ID_MAX) {
+							removed[option] = optionPiece;
+							prunedCount++;
+						} else {
+							options[option] = optionPiece;
+							optionCount++;
+						}
+					}
+				} else if (staticSides[`${placed.pieceId},${getOrigDirection(placed.rotation, direction)}`] !== undefined) {
+					for (const option in otherSpace.options) {
+						const optionPiece = otherSpace.options[option];
+						const optionSide = getSideId(optionPiece.pieceId, optionPiece.rotation, oppositeDir);
+						if (optionSide !== undefined) {
+							removed[option] = optionPiece;
+							prunedCount++;
+						} else {
+							const neighborId = getLayout1Neighbor(optionPiece, getOrigDirection(optionPiece.rotation, oppositeDir));
+							const neighborCoords = layout2Coords[`${neighborId}`];
+							if (neighborCoords !== undefined) {
+								if (neighborCoords.x != 1 && neighborCoords.x != WIDTH - 2 &&
+									neighborCoords.y != 1 && neighborCoords.y != HEIGHT - 2) {
+										removed[option] = optionPiece;
+										prunedCount++;
+								} else {
+									const neighbor = layout2[`${neighborCoords.x},${neighborCoords.y}`].optionSelected;
+									const neighborSideDir = (getOrigDirection(optionPiece.rotation, oppositeDir) + 2 + neighbor.rotation) % 4;
+									if (!(neighborCoords.x == 1 && neighborSideDir == 3) &&
+										!(neighborCoords.x == WIDTH - 2 && neighborSideDir == 1) &&
+										!(neighborCoords.y == 1 && neighborSideDir == 0) &&
+										!(neighborCoords.y == HEIGHT - 2 && neighborSideDir == 2)) {
+											removed[option] = optionPiece;
+											prunedCount++;
+									} else {
+										options[option] = optionPiece;
+										optionCount++;
+									}
+								}
+							}
+						}
+					}
+				} else if (Math.abs(placedSide) <= STATIC_ID_MAX) {
+					for (const option in otherSpace.options) {
+						const optionPiece = otherSpace.options[option];
+						const optionSide = getSideId(optionPiece.pieceId, optionPiece.rotation, oppositeDir);
+						if (optionSide === undefined ||
+							optionSide != -placedSide) {
+								removed[option] = optionPiece;
+								prunedCount++;
+						} else {
+							options[option] = optionPiece;
+							optionCount++;
+						}
+					}
+				} else if (Math.abs(placedSide) > STATIC_ID_MAX) {
+					const neighbor = requiredNeighbor[`${placed.pieceId},${direction}`]
+					const option = `${neighbor.pieceId},${(neighbor.side + placed.rotation) % 4}`;
+					if (otherSpace.options[option] === undefined) return false;
+					if (otherSpace.optionCount == 1) return true;
+					options[option] = otherSpace.options[option];
+					removed = otherSpace.options;
+					delete removed[option];
+					optionsRemoved[`${otherSpaceCoords}`].options.push(removed);
+					otherSpace.options = options;
+					otherSpace.optionCount = optionCount;
+					return true;
+				}*/
+
+                if (optionCount == 0) { 
+                    if (debug && false) {
+                        for (const s of spaceLog)
+                            console.log(s.x, s.y, s.optionSelected);
+                        console.log('No options', otherSpace);
+                        throw Error('No Options');
+                    }
+                    return false; }
+                if (prunedCount == 0) return true;
+				optionsRemoved[`${otherSpaceCoords}`].options.push(removed);
+				otherSpace.options = options;
+				otherSpace.optionCount = optionCount;
+                return true;
+            }
+            const otherCoords = layout1Coords[other.pieceId];
+            const otherSide = getSideId(other.pieceId, other.rotation, oppositeDir);
+            if (placedSide == -otherSide) return true;
+            if (placedSide == undefined && otherSide != undefined) {
+				if (Math.abs(otherSide) > STATIC_ID_MAX) {
+					if (debug && false) {
+                        console.log(spaceLog);
+					    console.log(dynamicSides);
+					    throw Error(`Other side: ${otherSide} facing ${oppositeDir} on piece ${other.pieceId}`);
+                    }
+                    return false;
+				}
+                const sideDir = getOrigDirection(placed.rotation, direction)
+                const neighbor = getLayout1Neighbor(placed, sideDir);
+				if (dynamicSides[`${neighbor},${sideDir}`] !== undefined &&
+					Math.abs(dynamicSides[`${neighbor},${sideDir}`]) <= STATIC_ID_MAX &&
+					dynamicSides[`${neighbor},${sideDir}`] > 0) {
+						if (debug && false) {
+                            console.log(spaceLog);
+						    console.log(dynamicSides);
+						    throw Error(`${other.pieceId} ${placed.rotation} ${placedSide} ${direction} Neighbor ${neighbor} side ${sideDir} ${dynamicSides[`${neighbor},${sideDir}`]} already needs to be on edge!`);
+                        }
+                        return false;
+				}
+                const neighborCoords = layout2Coords[`${neighbor}`]
+                if (neighborCoords !== undefined) {
+                    if (neighborCoords.x != 1 && neighborCoords.x != WIDTH - 2 &&
+                        neighborCoords.y != 1 && neighborCoords.y != HEIGHT - 2) {
+                            if (debug && false) {
+                                console.log(spaceLog);
+							    console.log(dynamicSides);
+							    throw Error(`Neighbor ${neighbor} is not on the edge!`);
+                            }
+                            return false;
+                    }
+                    const neighborSpace = layout2[`${neighborCoords.x},${neighborCoords.y}`];
+                    const neighborRotation = neighborSpace.optionSelected.rotation;
+                    const neighborSideDir = (sideDir + 2) % 4;
+                    if (!(neighborCoords.x == 1 && (neighborSideDir + neighborRotation) % 4 == 3) &&
+                        !(neighborCoords.x == WIDTH - 2 && (neighborSideDir + neighborRotation) % 4 == 1) &&
+                        !(neighborCoords.y == 1 && (neighborSideDir + neighborRotation) % 4 == 0) &&
+                        !(neighborCoords.y == HEIGHT - 2 && (neighborSideDir + neighborRotation) % 4 == 2)) {
+                            if (debug && false) {
+                                console.log(spaceLog);
+							    console.log(dynamicSides);
+							    throw Error(`Neighbor ${neighbor} side ${sideDir} is not facing the edge!`);
+                            }
+                            return false;
+                    }
+                }
+               
+                dynamicSides[`${placed.pieceId},${sideDir}`] = -otherSide;
+                sideChanges.push(`${placed.pieceId},${sideDir}`);
+                dynamicSides[`${neighbor},${(sideDir + 2) % 4}`] = otherSide;
+                sideChanges.push(`${neighbor},${(sideDir + 2) % 4}`);
+            }
+            else if (placedSide != undefined && otherSide == undefined) {
+				if (Math.abs(placedSide) > STATIC_ID_MAX) {
+					if (debug && false) {
+                        console.log(spaceLog);
+					    console.log(dynamicSides);
+					    throw Error(`Placed side: ${placedSide} facing ${direction} on piece ${placed.pieceId}`);
+                    }
+                    return false;
+				}
+                const sideDir = getOrigDirection(other.rotation, oppositeDir);
+                const neighbor = getLayout1Neighbor(other, sideDir);
+				if (dynamicSides[`${neighbor},${sideDir}`] !== undefined &&
+					Math.abs(dynamicSides[`${neighbor},${sideDir}`]) <= STATIC_ID_MAX &&
+					dynamicSides[`${neighbor},${sideDir}`] > 0) {
+						if (debug && false) {
+                            console.log(spaceLog);
+						    console.log(dynamicSides);
+						    throw Error(`Neighbor ${neighbor} side ${sideDir} already needs to be on edge!`);
+                        }
+                        return false;
+				}
+                const neighborCoords = layout2Coords[`${neighbor}`]
+                if (neighborCoords !== undefined) {
+                    if (neighborCoords.x != 1 && neighborCoords.x != WIDTH - 2 &&
+                        neighborCoords.y != 1 && neighborCoords.y != HEIGHT - 2) {
+                        if (debug && false) {
+                            console.log(spaceLog);
+						    console.log(dynamicSides);
+						    throw Error(`Neighbor ${neighbor} is not on the edge!`);
+                        }
+                        return false;
+                    }
+                    const neighborSpace = layout2[`${neighborCoords.x},${neighborCoords.y}`];
+                    const neighborRotation = neighborSpace.optionSelected.rotation;
+                    const neighborSideDir = (sideDir + 2) % 4;
+                    if (!(neighborCoords.x == 1 && (neighborSideDir + neighborRotation) % 4 == 3) &&
+                        !(neighborCoords.x == WIDTH - 2 && (neighborSideDir + neighborRotation) % 4 == 1) &&
+                        !(neighborCoords.y == 1 && (neighborSideDir + neighborRotation) % 4 == 0) &&
+                        !(neighborCoords.y == HEIGHT - 2 && (neighborSideDir + neighborRotation) % 4 == 2)) {
+                            if (debug && false) {
+                                console.log(spaceLog);
+							    console.log(dynamicSides);
+							    throw Error(`Neighbor ${neighbor} side ${sideDir} is not facing the edge!`);
+                            }
+                            return false;
+                    }
+                }
+               
+                dynamicSides[`${other.pieceId},${sideDir}`] = -placedSide;
+                sideChanges.push(`${other.pieceId},${sideDir}`);
+                dynamicSides[`${neighbor},${(sideDir + 2) % 4}`] = placedSide;
+                sideChanges.push(`${neighbor},${(sideDir + 2) % 4}`);
+            }
+            else if (placedSide == undefined && otherSide == undefined) {
+                if (edgeId >= DYNAMIC_ID_MAX) { 
+					if (debug && false) {
+                        console.log(spaceLog); 
+					    console.log(dynamicSides);
+					    throw new Error(`EdgeID Max of ${DYNAMIC_ID_MAX} exceeded`);
+                    }
+                    return false;
+				};
+                const placedSideDir = getOrigDirection(placed.rotation, direction);
+                const otherSideDir = getOrigDirection(other.rotation, oppositeDir);
+               
+                const placedNeighbor = getLayout1Neighbor(placed, placedSideDir); // 9
+                const placedNeighborCoords = layout2Coords[`${placedNeighbor}`]; // 1, 3
+                const placedNeighborSideDir = (placedSideDir + 2) % 4; // 3
+                const otherNeighbor = getLayout1Neighbor(other, otherSideDir); // 1
+                const otherNeighborCoords = layout2Coords[`${otherNeighbor}`]; // undefined
+                const otherNeighborSideDir = (otherSideDir + 2) % 4; // 2
+				if (placedNeighbor == otherNeighbor) {
+					if (debug && false) {
+                        console.log(spaceLog);
+					    console.log(dynamicSides);
+					    throw Error (`Placed neighbor is the same as other neighbor: ${placedNeighbor} = ${otherNeighbor}`);
+                    }
+                    return false;
+				}
+               
+                if (placedNeighborCoords !== undefined && otherNeighborCoords !== undefined) {
+                    const placedNeighborRotation = layout2[`${placedNeighborCoords.x},${placedNeighborCoords.y}`].optionSelected.rotation;
+                    const otherNeighborRotation = layout2[`${otherNeighborCoords.x},${otherNeighborCoords.y}`].optionSelected.rotation;
+                   
+                    if (getLayout2Neighbor(placedNeighbor, (placedNeighborSideDir + placedNeighborRotation) % 4) !== otherNeighbor ||
+                        getLayout2Neighbor(otherNeighbor, (otherNeighborSideDir + otherNeighborRotation) % 4) !== placedNeighbor) {
+                            if (debug && false) {
+                                console.log(spaceLog);
+							    console.log(dynamicSides);
+							    throw Error(`Piece ${otherNeighbor}'s neighbor is piece ${getLayout2Neighbor(placedNeighbor, (placedNeighborSideDir + placedNeighborRotation) % 4)} 
+					and piece ${placedNeighbor}'s neighbor is piece ${getLayout2Neighbor(otherNeighbor, (otherNeighborSideDir + otherNeighborRotation) % 4)}. 
+					PlacedNeighbor: ${placedNeighbor} at ${placedNeighborCoords.x},${placedNeighborCoords.y} OtherNeighbor: ${otherNeighbor} at ${otherNeighborCoords.x},${otherNeighborCoords.y}`);
+                            }
+                            return false;
+                    }
+                    if (otherNeighbor == placed.pieceId && placedNeighbor == other.pieceId) {
+                            if (debug) {
+                                console.log(spaceLog);
+                                console.log(dynamicSides);
+                                throw Error ('Pieces ${otherNeighbor} & ${placedNeighbor} are the same as ${placed} & ${other}');
+                            }    
+                    }
+                } else if (placedNeighborCoords !== undefined && otherNeighborCoords === undefined) {
+                    const placedNeighborRotation = layout2[`${placedNeighborCoords.x},${placedNeighborCoords.y}`].optionSelected.rotation; // 2
+                    const otherNeighborSpaceCoords = getCoordsInDirection(placedNeighborCoords.x, placedNeighborCoords.y, (placedNeighborSideDir + placedNeighborRotation) % 4); // 2, 3
+                    const otherNeighborSpace = layout2[`${otherNeighborSpaceCoords}`];
+					if (otherNeighborSpace.optionSelected !== undefined) {
+						if (debug && false) {
+                            console.log(spaceLog);
+						    console.log(dynamicSides);
+						    throw Error (`Piece already placed in other neighbor space ${otherNeighborSpace.x},${otherNeighborSpace.y}`);
+                        }
+                        return false;
+                    }
+                    const otherNeighborSpaceRotation = (placedNeighborSideDir + placedNeighborRotation - otherNeighborSideDir + 2) % 4; // 1
+                    const optionSelected = { pieceId: otherNeighbor, rotation: otherNeighborSpaceRotation };
+                    if (otherNeighborSpace.options[`${optionSelected.pieceId},${optionSelected.rotation}`] === undefined) {
+                        if (debug && false) {
+                            console.log(spaceLog);
+						    console.log(dynamicSides);
+						    throw Error(`Cannot place piece ${otherNeighbor}, rotation ${otherNeighborSpaceRotation} in other neighbor space ${otherNeighborSpace.x},${otherNeighborSpace.y}`);
+                        }
+                        return false;
+                    }
+					delete otherNeighborSpace.options[`${optionSelected.pieceId},${optionSelected.rotation}`];
+					optionsRemoved[`${otherNeighborSpaceCoords}`].options.push(otherNeighborSpace.options);
+                    otherNeighborSpace.options = {};
+                    otherNeighborSpace.options[`${optionSelected.pieceId},${optionSelected.rotation}`] = optionSelected;
+                } else if (placedNeighborCoords === undefined && otherNeighborCoords !== undefined) {
+                    const otherNeighborRotation = layout2[`${otherNeighborCoords.x},${otherNeighborCoords.y}`].optionSelected.rotation; // 2
+                    const placedNeighborSpaceCoords = getCoordsInDirection(otherNeighborCoords.x, otherNeighborCoords.y, (otherNeighborSideDir + otherNeighborRotation) % 4); // 2, 3
+                    const placedNeighborSpace = layout2[`${placedNeighborSpaceCoords}`];
+					if (placedNeighborSpace.optionSelected !== undefined) {
+						if (debug  && false) {
+                            console.log(spaceLog);
+						    console.log(dynamicSides);
+						    throw Error (`Piece already placed in placed neighbor space ${placedNeighborSpace.x},${placedNeighborSpace.y}`);
+                        }
+                        return false;
+                    }
+					const placedNeighborSpaceRotation = (otherNeighborSideDir + otherNeighborRotation - placedNeighborSideDir + 2) % 4; // 1
+                    const optionSelected = { pieceId: placedNeighbor, rotation: placedNeighborSpaceRotation };
+                    if (placedNeighborSpace.options[`${optionSelected.pieceId},${optionSelected.rotation}`] === undefined) {
+                        if (debug && false) {
+                            console.log(spaceLog);
+                            console.log(dynamicSides);
+                            throw Error(`Cannot place piece ${placedNeighbor}, rotation ${placedNeighborSpaceRotation} in placed neighbor space ${placedNeighborSpace.x},${placedNeighborSpace.y}`);
+                        }
+                        return false;
+                    }
+					delete placedNeighborSpace.options[`${optionSelected.pieceId},${optionSelected.rotation}`];
+					optionsRemoved[`${placedNeighborSpaceCoords}`].options.push(placedNeighborSpace.options);
+                    placedNeighborSpace.options = {};
+                    placedNeighborSpace.options[`${optionSelected.pieceId},${optionSelected.rotation}`] = optionSelected;
+                }
+               
+                edgeId++;
+                dynamicSides[`${placed.pieceId},${placedSideDir}`] = edgeId;
+                dynamicSides[`${other.pieceId},${otherSideDir}`] = -edgeId;
+                sideChanges.push(`${placed.pieceId},${placedSideDir}`);
+                sideChanges.push(`${other.pieceId},${otherSideDir}`);
+                dynamicSides[`${placedNeighbor},${(placedSideDir + 2) % 4}`] = -edgeId;
+                sideChanges.push(`${placedNeighbor},${(placedSideDir + 2) % 4}`);
+                dynamicSides[`${otherNeighbor},${(otherSideDir + 2) % 4}`] = edgeId;
+                sideChanges.push(`${otherNeighbor},${(otherSideDir + 2) % 4}`);
+            } else {
+                if (debug && false) {
+                    console.log(spaceLog);
+                    console.log('439', placed, placedSide, other, otherSide);
+                    throw Error('Sides do not match');
+                }
+                return false;
+            }
+            return true;
+        }
+
+        function getSideId(pieceId, rotation, direction) {
+            const origDir = getOrigDirection(rotation, direction);
+            const key = `${pieceId},${origDir}`;
+            return dynamicSides[key]!==undefined?dynamicSides[key]:staticSides[key];
+        }
+        function getOrigDirection(rotation, direction) {
+            return (direction - rotation + 4) % 4;
+        }
+        function getCoordsInDirection(x, y, direction) {
+            if (direction == TOP) return `${x},${y-1}`;
+            if (direction == RIGHT) return `${x+1},${y}`;
+            if (direction == BOTTOM) return `${x},${y+1}`;
+            if (direction == LEFT) return `${x-1},${y}`;
+        }
+
+        function revertSides(changes) {
+            for (const key of changes) {
+                //console.log('Revert Side: ' + key);
+                delete dynamicSides[key];
+            }
+        }
+       
+        function getLayout1Neighbor(piece, direction) {
+            const pieceCoords = layout1Coords[`${piece.pieceId}`];
+            return layout1[getCoordsInDirection(pieceCoords.x, pieceCoords.y, direction)];
+        }
+        function getLayout2Neighbor(pieceId, direction) {
+            const pieceCoords = layout2Coords[`${pieceId}`];
+            if (pieceCoords === undefined) return undefined;
+            if (layout2[getCoordsInDirection(pieceCoords.x, pieceCoords.y, direction)] === undefined) return undefined;
+            return layout2[getCoordsInDirection(pieceCoords.x, pieceCoords.y, direction)].optionSelected;
+        }
+       
+        function saveSolution() {
+			console.log(spaceLog);
+			throw Error('');
+            let solution = '';
+            for (let y = 0; y < HEIGHT; y++) {
+                let line = '';
+                for (let x = 0; x < WIDTH; x++) {
+                    if (!layout2[`${x},${y}`].optionSelected) {
+                        line += 'n,n ';
+                        continue;
+                    }
+                    line += layout2[`${x},${y}`].optionSelected.pieceId + ',' + layout2[`${x},${y}`].optionSelected.rotation + ' ';
+                }
+                solution += line + '\n';
+            }
+            solutions.push(solution);
+        }
+
+        initSpaces();
+        initStaticSides();
+        initOptions();
+
+        let solutions = [];
+        console.timeEnd('timer1');
+        /*for (const key in layout2) {
+            console.log(layout2[key].x, layout2[key].y, layout2[key].optionCount);
+        }*/
+        let goToString = 
+`n,n n,n n,n n,n n,n n,n 
+n,n 8,2 9,3 10,0 11,0 n,n 
+n,n 14,2 20,3 27,3 17,1 n,n 
+n,n 15,3 29,3 22,2 23,2 n,n 
+n,n 28,3 16,3 26,3 21,3 n,n 
+n,n n,n n,n n,n n,n n,n `;
+        let splitString = goToString.split('\n');
+        const goToSolution = [];
+        for (const line of splitString) {
+            let array = line.split(' ');
+            goToSolution.push(array);
+        }
+        let goToOption;
+        console.log(goToString)
+        const debug = true;
+
+        backtrack();
+        console.timeEnd('timer2');
+        console.log(solutions.length);
+		console.log(solutions[0]);
+
+        /*for (const key in layout2) {
+            console.log(layout2[key].x, layout2[key].y, layout2[key].optionCount);
+        }*/
+        for (const space of spaceLog)
+            console.log(space.x, space.y, space.optionSelected);
+
+    </script>
+</head>
+
+<body>
+</body>
+
+</html>
+
