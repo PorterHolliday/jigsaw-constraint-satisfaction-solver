@@ -8,6 +8,7 @@
 		console.time('timer');
 		let solutionCount = 0;
 		let solutions = '';
+		let backtrack_count = 0
 		// PieceSide - Object for one side of a puzzle piece
 		class PieceSide {
 			constructor() {
@@ -197,8 +198,8 @@
 			}
 		}
 
-		let width  = 6;
-		let height = 6;
+		let width  = 5;
+		let height = 5;
 		let layout1 = new PuzzleLayout(width, height);
 		let layout2 = new PuzzleLayout(width, height);
 		let outerPieces;
@@ -265,7 +266,7 @@
 				//solveOuterPieces();
 				//console.log(puzzleCount);
 				outputPuzzleLayout();
-				return true;
+				return;
 			}
 			// Go through each piece left to place and try it in the current space in layout2
 			for (let i = 0; i < innerPieces.length; i++) {
@@ -280,9 +281,10 @@
 					// If pieces were updated successfully, continue to next space
 					if (updatePieceSides(piece, changes)) {
 						innerPieces.splice(i, 1); // Remove piece just placed from list of pieces
-						if (solveInnerPieces()) return true; // Move on to next space and try pieces that are left
+						solveInnerPieces() // Move on to next space and try pieces that are left
                         innerPieces.splice(i, 0, piece); // Add piece back to list of pieces
 					} 
+					backtrack_count++;
                     revertChanges(changes); // Revert any changes made when updating pieces
 				}
                 layout2.removeInnerPiece(); // Remove most recently placed piece to try the next one
@@ -605,7 +607,8 @@
 		}
 		console.timeEnd('timer');
 		console.log(solutionCount);
-		console.log(solutions);
+		//console.log(solutions);
+		console.log(backtrack_count);
 	</script>
 </head>
 

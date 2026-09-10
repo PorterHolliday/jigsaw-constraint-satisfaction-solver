@@ -172,6 +172,23 @@
                 if (piece.locationOptionCount == 0 || this.pieceOptionCount == 0) return false;
                 return true;
             }
+            removeAllOptionsButOne(option, optionsToRevert) {
+                const piece = option.piece;
+                const rotation = option.rotation;
+                if (!this.pieceOptions[`${piece.id},${rotation}`]) return false;
+
+                for (const key of this.pieceOptions) {
+                    const option = this.pieceOptions[key];
+                    const piece = option.piece;
+                    optionsToRevert.push(option);
+                    delete this.pieceOptions[option];
+                    delete piece.locationOptions[`${this.x},${this.y},${option.rotation}`];
+                    piece.locationOptionCount--;
+                    if (piece.locationOptionCount == 0) return false;
+                }
+                tihs.pieceOptionCount = 1;
+                return true;
+            }
         }
         // Option object class
         class Option {
@@ -202,8 +219,8 @@
                 return (direction + 2) % 4;
             },
             rotate: function(direction, count) {
-                if (!count) count = 1;
-                return (directino + count) % 4;
+                if (count < 0) count += 4;
+                return (direction + count) % 4;
             }
         });
 
@@ -501,45 +518,133 @@
             // Prune options for edge locations
             function pruneEdges(locations, location, optionsToRevert, edgesToRevert) {
                 const piece = location.piece;
-                const updateOptionPieces = [];
-                updateOptionPieces.push(piece);
+                
+                if (!updateEdgesAndPrune()) return false;
+                if (!pruneOtherOptions(location, optionsToRevert)) return false;
 
-                // Update edges
-                function updateEdges() {
-                    // Get edge this location is on
-                    let edgeOfPuzzle;
-                    if (location.x == 0) edgeOfPuzzle = Direction.LEFT;
-                    else if (location.x == WIDTH - 1) edgeOfPuzzle = Direction.RIGHT;
-                    else if (location.y == 0) edgeOfPuzzle = Direction.TOP;
-                    else if (location.y == HEIGHT - 1) edgeOfPuzzle = Direction.BOTTOM;
-                    // Update piece edges on correct sides
-                    // Right/Left sets Top/Bottom and vice versa
-                    if (setEdge(location, piece, rotate(edgeOfPuzzle, 1))) {
-                        // Update options based on new edges
-                    }
-                    if (setEdge(location, piece, rotate(edgeOfPuzzle, 3))) {
-                        // Update options based on new edges
-                    }
+                // Update edges and prune options based on updates
+                function updateEdgesAndPrune() {
+                    // Determine which border side piece is on
+                    let borderEdge;
+                    if (location.x == 0) borderEdge = Direction.LEFT;
+                    else if (location.x == WIDTH - 1) borderEdge = Direction.RIGHT;
+                    else if (location.y == 0) borderEdge = Direction.TOP;
+                    else if (location.y == HEIGHT - 1) borderEdge = Direction.BOTTOM;
 
-                    // Sets this piece and neighbor piece's edges to match, if neighbor is found and they
-                    // are not already set.
-                    function setEdge(location, piece, direction) {
-                        let otherPiece = layout2.getLocationInDirection(location, direction).piece;
-                        if (otherPiece && !piece.edges[direction]) {
-                            piece.setEdgeId(direction, currentEdgeId, edgesToRevert);
-                            currentEdgeId++;
-                            return true;
+                    // Update both sides of piece connected to other border piece
+                    if (!updateBorderEdgeAndPrune(location, Direction.rotate(borderEdge, 1))) return false;
+                    if (!updateBorderEdgeAndPrune(location, Direction.rotate(borderEdge, 3))) return false;
+
+                    return true;
+
+                    function updateBorderEdgeAndPrune(location, direction) {
+                        // Ensure this piece's edge hasn't been set
+                        const piece = location.piece;
+                        const rotation = location.rotation;
+                        if (piece.getEdgeId(direction, rotation)) return true;
+                        // Ensure neighbor piece is placed
+                        const otherLocation = layout2.getLocationInDirection(location, direction);
+                        const otherPiece = otherLocation.piece;
+                        const otherRotation = otherLocation.rotation;
+                        const otherDirection = Direction.getOpposite(direction);
+                        if (!otherPiece) return true;
+
+                        // Get piece's neighbors in layout1
+                        const neighborPiece = layout1.getLocationInDirection(location, Direction.getOriginal(direction, rotation)).piece;
+                        const neighborLoc = layout2.pieceLocations[`${neighborPiece.id}`];
+                        let neighborDirection;
+                        if (neighborLoc) 
+                            neighborDirection = Direction.rotate(Direction.getOpposite(Direction.getOriginal(direction, rotation)), neighborLoc.rotation);
+                        console.log(otherLocation, otherDirection, otherRotation, Direction.getOriginal(otherDirection, otherRotation), layout1.getLocationInDirection(otherLocation, Direction.getOriginal(otherDirection, otherRotation)));
+                        const otherNeighborPiece = layout1.getLocationInDirection(otherLocation, Direction.getOriginal(otherDirection, otherRotation)).piece;
+                        const otherNeighborLoc = layout2.pieceLocations[`${otherNeighborPiece.id}`];
+                        let otherNeighborDirection;
+                        if (otherNeighborLoc)
+                            otherNeighborDirection = Direction.rotate(Direction.getOpposite(Direction.getOriginal(otherDirection, otherRotation)), otherNeighborLoc.rotation);
+                        // If both neighbor pieces are placed, ensure they are connected to each other
+                        if (neighborLoc && otherNeighborLoc) {
+                            if (layout2.getLocationInDirection(neighborLoc, neighborDirection) != otherNeighborLoc) return false;
                         }
-                        return false;
+                        // If one neighbor piece is placed, prune space next to it to only allow other neighbor
+                        else if (neighborLoc) {
+                            if (!pruneToSingleOption(neighborLoc, neighborDirection, otherNeighborPiece, optionsToRevert)) return false;
+                        } 
+                        else if (otherNeighborLoc) {
+                        
+                        }
+                        // If neither is placed, add it to list of connections
+                        else {
+                        
+                        }
+
+                        // Set all piece's edges
+                        piece.setEdgeId(Direction.getOriginal(direction, rotation), currentEdgeId);     
+                        edgesToRevert.push(new EdgeRevert(piece, Direction.getOriginal(direction, rotation)))                   
+                        otherPiece.setEdgeId(Direction.getOriginal(Direction.getOpposite(direction), otherRotation), -currentEdgeId);
+                        edgesToRevert.push(new EdgeRevert(otherPiece, Direction.getOriginal(Direction.getOpposite(direction), otherRotation)));
+
+                        return true;
                     }
                 }
+
+                // Prune neighboring space to single specified option
+                function pruneToSingleOption(location, direction, piece, optionsToRevert) {
+                    if (!location.piece) return true;
+                    const neighborLoc = layout2.getLocationInDirection(location, Direction.rotate(direction, location.rotation));
+                    console.log(location, direction, Direction.rotate(direction, location.rotation), neighborLoc);
+
+                    // Get rotation
+                    let pieceEdge;
+                    if (layout1.pieceLocations[`${piece.id}`].x == 0) pieceEdge = Direction.LEFT;
+                    else if (layout1.pieceLocations[`${piece.id}`].x == WIDTH - 1) pieceEdge = Direction.RIGHT;
+                    else if (layout1.pieceLocations[`${piece.id}`].y == 0) pieceEdge = Direction.TOP;
+                    else if (layout1.pieceLocations[`${piece.id}`].y == HEIGHT - 1) pieceEdge = Direction.BOTTOM;
+                    let locationEdge;
+                    if (neighborLoc.x == 0) locationEdge = Direction.LEFT;
+                    else if (neighborLoc.x == WIDTH - 1) locationEdge = Direction.RIGHT;
+                    else if (neighborLoc.y == 0) locationEdge = Direction.TOP;
+                    else if (neighborLoc.y == HEIGHT - 1) locationEdge = Direction.BOTTOM;
+                    const rotation = Direction.rotate(0, locationEdge - pieceEdge);
+
+                    if (neighborLoc.piece) {
+                        return neighborLoc.piece == piece && neighborLoc.rotation == rotation;
+                    }
+
+                    return neighborLoc.removeAllOptionsButOne(new Option(location, piece, rotation), optionsToRevert);
+                }
                 
-                // Set edges
-                // Remove options from locations/pieces that don't work
-                // Constraints:
-                //  Pieces like 1-2 in layout1 can't be 1-2 or 1-_-2 in layout2
-                //   Both in front and behind
-                //  Pieces like 1-_-2 in layout1 can't be 1-2 in layout2
+                // Remove options from other locations/pieces that don't work
+                function pruneOtherOptions(location, optionsToRevert) {
+                    // Constraints:
+                    //  Pieces like 1-2 in layout1 can't be 1-2 or 1-_-2 in layout2
+                    //   Both in front and behind
+                    //  Pieces like 1-_-2 in layout1 can't be 1-2 in layout2
+
+                    // Get pertinent locations in layout2
+                    const locClockwise = getBorderLocClockwise(layout2, location);
+                    const locCounterClockwise = getBorderLocCounterClockwise(layout2, location);
+                    const loc2Clockwise = getBorderLocClockwise(layout2, location, 2);
+                    const loc2CounterClockwise = getBorderLocCounterClockwise(layout2, location, 2);
+                    // Get pertinent locations in layout1
+                    const cornerPiece = location.piece;
+                    const layout1Loc = layout1.pieceLocations[`${cornerPiece.id}`];
+                    const layout1LocClockwise = getBorderLocClockwise(layout1, layout1Loc);
+                    const layout1LocCounterClockwise = getBorderLocCounterClockwise(layout1, layout1Loc);
+                    const layout1Loc2Clockwise = getBorderLocClockwise(layout1, layout1Loc, 2);
+                    const layout1Loc2CounterClockwise = getBorderLocCounterClockwise(layout1, layout1Loc, 2);
+
+                    // Remove options, or return false if a location or piece has no options left to show this is a dead end
+                    // Remove options 1 or 2 spaces clockwise in layout1 from 1 clockwise space in layout2
+                    if (!locClockwise.removeAllPieceOptions(layout1LocClockwise.piece, optionsToRevert)) return false;
+                    if (!locClockwise.removeAllPieceOptions(layout1Loc2Clockwise.piece, optionsToRevert)) return false;
+                    // Remove options 1 or 2 spaces counterclockwise in layout1 from 1 counterclockwise space in layout2
+                    if (!locCounterClockwise.removeAllPieceOptions(layout1LocCounterClockwise.piece, optionsToRevert)) return false;
+                    if (!locCounterClockwise.removeAllPieceOptions(layout1Loc2CounterClockwise.piece, optionsToRevert)) return false;
+                    // Remove options 1 space clockwise in layout1 from 2 clockwise space in layout2
+                    if (!loc2Clockwise.removeAllPieceOptions(layout1LocClockwise.piece, optionsToRevert)) return false;
+                    // Remove options 1 space counterclockwise in layout1 from 2 counterclockwise space in layout2
+                    if (!loc2CounterClockwise.removeAllPieceOptions(layout1LocCounterClockwise.piece, optionsToRevert)) return false;
+                }
             }
 
             // Prune options for center locations
